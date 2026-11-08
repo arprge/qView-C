@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "cpp-coding-standards": {
+      "source": "affaan-m/ecc",
+      "sourceType": "github",
+      "skillPath": "skills/cpp-coding-standards/SKILL.md",
+      "computedHash": "e8c59d13fe23b088e24dcf6b77845823c5b5636b5c52434550f9b1837bc44ac3"
+    },
     "qt-cpp-docs": {
       "source": "theqtcompanyrnd/agent-skills",
       "sourceType": "github",
@@ -12,12 +18,6 @@
       "sourceType": "github",
       "skillPath": "skills/qt-ui-design/SKILL.md",
       "computedHash": "971e8ad62ac9d66d13a634cc8aad1b2d284276da6b8501a2307b1dfcb6018649"
-    },
-    "ui-ux-pro-max": {
-      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
-      "sourceType": "github",
-      "skillPath": ".claude/skills/ui-ux-pro-max/SKILL.md",
-      "computedHash": "411316b5893571bda59f1517b1fd639682cbbc26f8c804c08a071f2b7b864992"
     }
   }
 }
