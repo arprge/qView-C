@@ -727,15 +727,18 @@ void QVImageCore::setPreviewPixmap(const QPixmap &pixmap)
     currentFileDetails.loadedPixmapSize = loadedPixmap.size();
 }
 
-QImage QVImageCore::applyBrightnessContrast(const QImage &source, int brightness, int contrast)
+QImage QVImageCore::applyBrightnessContrast(const QImage &source, int brightness, int contrast,
+                                            int saturation, int warmth)
 {
     if (source.isNull())
         return source;
 
     brightness = qBound(-100, brightness, 100);
     contrast = qBound(-100, contrast, 100);
+    saturation = qBound(-100, saturation, 100);
+    warmth = qBound(-100, warmth, 100);
 
-    if (brightness == 0 && contrast == 0)
+    if (brightness == 0 && contrast == 0 && saturation == 0 && warmth == 0)
         return source;
 
     const bool wasPremultiplied = source.format() == QImage::Format_ARGB32_Premultiplied;
@@ -744,23 +747,68 @@ QImage QVImageCore::applyBrightnessContrast(const QImage &source, int brightness
     // Opaque images need no (un)premultiplication; keep RGB32 as-is.
     QImage result = source.convertToFormat(opaque ? QImage::Format_RGB32 : QImage::Format_ARGB32);
 
-    const int offset = qRound(brightness * 2.55);
-    const qreal contrastValue = qBound(-255.0, contrast * 2.55, 255.0);
-    const qreal factor = (259.0 * (contrastValue + 255.0)) / (255.0 * (259.0 - contrastValue));
+    // Gentle, mobile-gallery-style response curve:
+    // - Brightness uses a smooth quadratic shadow/highlight-preserving curve (lifts midtones by up
+    //   to ±32 while tapering off near 0 and 255) plus a small endpoint shift (±12).
+    // - Contrast uses a subtle multiplier (~0.65x at -100 to ~1.55x at +100) around mid-gray.
+    // - Warmth shifts R and B in opposite directions with midtone weighting.
+    const qreal bNorm = brightness / 100.0;
+    const qreal midtoneShift = bNorm * 32.0;
+    const qreal endpointShift = bNorm * 12.0;
 
-    uchar lut[256];
-    for (int i = 0; i < 256; i++)
-        lut[i] = uchar(qBound(0, qRound(((i - 128) * factor) + 128 + offset), 255));
+    const qreal cNorm = contrast / 100.0;
+    const qreal factor = qPow(1.55, cNorm);
+
+    const qreal wNorm = warmth / 100.0;
+    const qreal warmR = wNorm * 24.0;
+    const qreal warmG = wNorm * 4.0;
+    const qreal warmB = -wNorm * 24.0;
+
+    uchar lutR[256];
+    uchar lutG[256];
+    uchar lutB[256];
+    for (int i = 0; i < 256; i++) {
+        const qreal normalized = i / 255.0;
+        // 4 * t * (1 - t) peaks at 1.0 in midtones and tapers to 0 at pure black/white
+        const qreal midtoneWeight = 4.0 * normalized * (1.0 - normalized);
+        const qreal brightened = i + midtoneShift * midtoneWeight + endpointShift;
+        const qreal contrasted = ((brightened - 128.0) * factor) + 128.0;
+        const qreal warmWeight = 0.35 + 0.65 * midtoneWeight;
+        lutR[i] = uchar(qBound(0, qRound(contrasted + warmR * warmWeight), 255));
+        lutG[i] = uchar(qBound(0, qRound(contrasted + warmG * warmWeight), 255));
+        lutB[i] = uchar(qBound(0, qRound(contrasted + warmB * warmWeight), 255));
+    }
+
+    // Saturation in fixed-point (256 = 1.0x; 0 at -100, 448 (~1.75x) at +100)
+    const int satFp = (saturation >= 0) ? (256 + (saturation * 192) / 100)
+                                        : (256 + (saturation * 256) / 100);
+    const bool applySat = (saturation != 0);
 
     const int width = result.width();
     const int height = result.height();
-    const auto processRows = [&result, &lut, width](int firstRow, int lastRow) {
+    const auto processRows = [&result, &lutR, &lutG, &lutB, width, applySat, satFp](int firstRow,
+                                                                                    int lastRow) {
         for (int y = firstRow; y < lastRow; y++) {
             auto *line = reinterpret_cast<QRgb *>(result.scanLine(y));
-            for (int x = 0; x < width; x++) {
-                const QRgb pixel = line[x];
-                line[x] = (pixel & 0xFF000000u) | (QRgb(lut[qRed(pixel)]) << 16)
-                        | (QRgb(lut[qGreen(pixel)]) << 8) | QRgb(lut[qBlue(pixel)]);
+            if (!applySat) {
+                for (int x = 0; x < width; x++) {
+                    const QRgb pixel = line[x];
+                    line[x] = (pixel & 0xFF000000u) | (QRgb(lutR[qRed(pixel)]) << 16)
+                            | (QRgb(lutG[qGreen(pixel)]) << 8) | QRgb(lutB[qBlue(pixel)]);
+                }
+            } else {
+                for (int x = 0; x < width; x++) {
+                    const QRgb pixel = line[x];
+                    int r = lutR[qRed(pixel)];
+                    int g = lutG[qGreen(pixel)];
+                    int b = lutB[qBlue(pixel)];
+                    // Rec.709 luma in 8-bit fixed-point
+                    const int luma = (54 * r + 183 * g + 19 * b) >> 8;
+                    r = qBound(0, luma + (((r - luma) * satFp) >> 8), 255);
+                    g = qBound(0, luma + (((g - luma) * satFp) >> 8), 255);
+                    b = qBound(0, luma + (((b - luma) * satFp) >> 8), 255);
+                    line[x] = (pixel & 0xFF000000u) | (QRgb(r) << 16) | (QRgb(g) << 8) | QRgb(b);
+                }
             }
         }
     };

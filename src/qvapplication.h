@@ -87,6 +87,8 @@ public:
 
     void ensureFontLoaded(const QString &path);
 
+    void applyUiScale();
+
     static QIcon iconFromFont(const QString &fontFamily, const QChar &codePoint, const int pixelSize, const qreal pixelRatio);
 
     static qreal getPerceivedBrightness(const QColor &color);
@@ -97,6 +99,9 @@ private:
     QMenu *dockMenu;
 
     QMenuBar *menuBar;
+
+    QFont baseApplicationFont;
+    QString baseStyleName;
 
     QStringList nameFilterList;
     QStringList fileExtensionList;

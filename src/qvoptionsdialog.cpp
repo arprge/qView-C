@@ -192,6 +192,8 @@ void QVOptionsDialog::syncSettings(bool defaults, bool makeConnections)
     syncCheckbox(ui->menubarCheckbox, "menubarenabled", defaults, makeConnections);
     // fullscreendetails
     syncCheckbox(ui->detailsInFullscreen, "fullscreendetails", defaults, makeConnections);
+    // uiscale
+    syncSpinBox(ui->uiScaleSpinBox, "uiscale", defaults, makeConnections);
     // filteringenabled
     syncCheckbox(ui->filteringCheckbox, "filteringenabled", defaults, makeConnections);
     // scalingenabled

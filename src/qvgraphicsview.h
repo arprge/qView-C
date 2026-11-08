@@ -78,7 +78,8 @@ public:
     bool isEditing() const { return editMode != EditMode::None; }
     EditMode getEditMode() const { return editMode; }
 
-    void setBrightnessContrastPreview(int brightness, int contrast);
+    void setBrightnessContrastPreview(int brightness, int contrast, int saturation = 0,
+                                      int warmth = 0);
 
     void setDrawSettings(const DrawSettings &settings) { drawSettings = settings; }
     const DrawSettings &getDrawSettings() const { return drawSettings; }
@@ -162,7 +163,19 @@ private:
     void updateFilteringMode();
     void resetEditState();
     void applyBrightnessContrastPreview();
-    void updateCropOverlay(const QPoint &currentPos);
+    // Crop border handling: handles are bit flags (a corner is two edges combined)
+    enum CropHandle {
+        HandleNone = 0,
+        HandleLeft = 1,
+        HandleRight = 2,
+        HandleTop = 4,
+        HandleBottom = 8,
+        HandleMove = 16
+    };
+    int cropHandleAt(const QPointF &scenePos) const;
+    void updateCropCursor(int handle);
+    void dragCropTo(const QPointF &scenePos);
+    void updateCropOverlay();
     void updateCropDimOverlay(const QRectF &selection);
     QRect cropPixelRect() const;
 
@@ -199,7 +212,12 @@ private:
     // Crop state
     QGraphicsPathItem *cropDimItem = nullptr;
     QGraphicsRectItem *cropSelectionItem = nullptr;
-    QPoint cropDragStart;
+    QRectF cropRect;               // current selection in scene (== image pixel) coordinates
+    QRectF cropRectAtDragStart;
+    QPointF cropDragStartScene;
+    int cropDragHandle = HandleNone;
+    QGraphicsRectItem *cropHandleItems[8] = {};
+    QGraphicsRectItem *cropOutlineItem = nullptr;
     bool cropDragging = false;
     bool hasCropSelection = false;
 
@@ -208,8 +226,12 @@ private:
     QPixmap editBasePixmap;
     // Cached once per edit session so slider ticks don't re-convert the pixmap
     QImage editBaseImage;
+    // Downscaled working copy (~2 MP max) so slider dragging stays instant on huge photos
+    QImage editPreviewImage;
     int pendingBrightness = 0;
     int pendingContrast = 0;
+    int pendingSaturation = 0;
+    int pendingWarmth = 0;
 
     // Draw state (annotations live in scene coordinates == image pixels while editing)
     DrawSettings drawSettings;
