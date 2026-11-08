@@ -1,28 +1,42 @@
+Personal fork of qView with very minimal image editing functionality
+
+------
+
 <h1 align=center>qView</h1>
 
 <p align=center>qView is an image viewer designed with minimalism and usability in mind.</p>
 
-<h3 align=center>
-    <a href="https://interversehq.com/qview/">Visit the website</a>
-</h3>
-
-<h4 align=center>
-    <a href="https://interversehq.com/qview/download">Downloads</a> |
-    <a href="https://interversehq.com/qview/changelog">Changelog</a> | <a href="https://interversehq.com/discord">Discord</a>
-</h4>
-
 <p align=center>
-    <a href="https://interversehq.com/qview/download">
-        <img alt="Downloads shield" src="https://img.shields.io/github/downloads/jurplel/qview/total?color=blue&style=flat-square">
-    </a>
-    <a href="https://aur.archlinux.org/packages/qview/">
-        <img alt="AUR shield" src="https://img.shields.io/aur/version/qview?style=flat-square">
-    </a>
-    <a href="https://formulae.brew.sh/cask/qview">
-        <img alt="Homebrew cask shield" src="https://img.shields.io/homebrew/cask/v/qview?style=flat-square">
-    </a>
+    <a href="https://github.com/jurplel/qView">Original Upstream Repository</a>
 </p>
 
 <p align=center>
     <img alt="Screenshot" src="https://interversehq.com/qview/assets/img/screenshot3.png">
 </p>
+
+_______
+All fork-specific editing code is isolated in the [`src/edit`](src/edit) directory:
+
+- [`src/edit/qveditpanel.cpp`](src/edit/qveditpanel.cpp) / [`.h`](src/edit/qveditpanel.h) &mdash; Floating/collapsible edit toolbar panel with tabbed controls for Crop, Adjust, and Draw.
+- [`src/edit/qvgraphicsviewedit.cpp`](src/edit/qvgraphicsviewedit.cpp) &mdash; Interactive viewport editing implementation (crop selection overlay with 8-point resize handles and canvas drawing interaction).
+- [`src/edit/qvimagecoreedit.cpp`](src/edit/qvimagecoreedit.cpp) &mdash; Backend image manipulation (LUT-based tone curves for brightness/contrast, saturation and warmth shifts, pixel cropping, and safe file saving/replacement).
+- [`src/edit/mainwindowedit.cpp`](src/edit/mainwindowedit.cpp) &mdash; Edit panel setup, session lifecycle, dirty-state tracking, and save/replace workflows.
+
+### Editing Features
+
+- **Crop** (Shortcut: <kbd>C</kbd>): Interactive crop rectangle with 8 drag handles, aspect ratio presets (Free, 1:1, 4:3, 16:9, 3:2, etc.), live dimension readouts, and reset capability.
+- **Adjust** (Shortcut: <kbd>B</kbd>): Real-time adjustment sliders for Brightness, Contrast, Saturation, and Warmth with tone curve preview and reset.
+- **Draw** (Shortcut: <kbd>D</kbd>): Annotation and sketching tools including Pen (freehand), Line, Rectangle, Circle, and Arrow with customizable brush size, color picker, eraser, and multi-step undo/redo.
+- **Saving**: Overwrite the original file in-place or export as a new file ("Save Copy As...").
+
+### Other changes 
+
+- **Interface scaling**: Adjust the interface font and widget sizes from 50% to 200% in 5% increments.
+
+## License
+
+qView is free and open-source software licensed under the **[GNU General Public License v3.0](LICENSE)** (GPL-3.0-or-later).
+
+- Original qView copyright &copy; 2018&ndash;present jurplel and qView contributors.
+- Fork additions and modifications copyright &copy; 2026 the fork contributors.
+- In accordance with the GNU GPLv3, this fork and all modifications are distributed under the same license terms. See [LICENSE](LICENSE) for details.
