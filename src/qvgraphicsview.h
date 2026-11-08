@@ -9,11 +9,15 @@
 #include <QTimer>
 #include <QFileInfo>
 #include <QColor>
+#include <QFlags>
+#include <QList>
 #include <QPainterPath>
 #include <QPen>
-#include <QList>
+#include <array>
 
+class QGraphicsItem;
 class QGraphicsPathItem;
+class QGraphicsPixmapItem;
 class QGraphicsRectItem;
 class QKeyEvent;
 
@@ -43,6 +47,17 @@ public:
         QColor color = Qt::red;
         int width = 4;
     };
+
+    // Crop border handling: handles are bit flags (a corner is two edges combined)
+    enum class CropHandle : int {
+        None = 0x0,
+        Left = 0x1,
+        Right = 0x2,
+        Top = 0x4,
+        Bottom = 0x8,
+        Move = 0x10,
+    };
+    Q_DECLARE_FLAGS(CropHandles, CropHandle)
 
     QMimeData *getMimeData() const;
     void loadMimeData(const QMimeData *mimeData);
@@ -169,20 +184,28 @@ private slots:
 
 private:
     void updateFilteringMode();
+
+    // Edit session lifecycle
+    void clearEditBuffers();
     void resetEditState();
+    bool commitCropEdit();
+    bool commitAdjustEdit();
+    bool commitDrawEdit();
+    bool hasPendingAdjustments() const;
+    void showPixmap(const QPixmap &pixmap);
     void applyBrightnessContrastPreview();
-    // Crop border handling: handles are bit flags (a corner is two edges combined)
-    enum CropHandle {
-        HandleNone = 0,
-        HandleLeft = 1,
-        HandleRight = 2,
-        HandleTop = 4,
-        HandleBottom = 8,
-        HandleMove = 16
-    };
-    int cropHandleAt(const QPointF &scenePos) const;
-    void updateCropCursor(int handle);
+
+    CropHandles cropHandleAt(const QPointF &scenePos) const;
+    void updateCropCursor(CropHandles handle);
     void dragCropTo(const QPointF &scenePos, bool constrain = false);
+    QRectF dragCropMove(QRectF rect, const QRectF &bounds, qreal dx, qreal dy) const;
+    QRectF dragCropFree(QRectF rect, const QRectF &bounds, qreal dx, qreal dy) const;
+    QRectF dragCropCorner(QRectF rect, const QRectF &bounds, qreal dx, qreal dy,
+                          qreal aspectRatio) const;
+    QRectF dragCropHorizontalEdge(QRectF rect, const QRectF &bounds, qreal dx,
+                                  qreal aspectRatio) const;
+    QRectF dragCropVerticalEdge(QRectF rect, const QRectF &bounds, qreal dy,
+                                qreal aspectRatio) const;
     qreal effectiveCropAspectRatio(bool constrain = false) const;
     void updateCropOverlay();
     void updateCropDimOverlay(const QRectF &selection);
@@ -225,8 +248,8 @@ private:
     QRectF cropRectAtDragStart;
     QPointF cropDragStartScene;
     QSizeF cropAspectRatio;        // (0,0) = Free, (-1,-1) = Original image aspect, (w,h) = fixed
-    int cropDragHandle = HandleNone;
-    QGraphicsRectItem *cropHandleItems[8] = {};
+    CropHandles cropDragHandle = CropHandle::None;
+    std::array<QGraphicsRectItem *, 8> cropHandleItems{};
     QGraphicsRectItem *cropOutlineItem = nullptr;
     QGraphicsPathItem *cropGridItem = nullptr;
     QGraphicsPathItem *cropGridOutlineItem = nullptr;
@@ -260,4 +283,7 @@ private:
     QPen makeDrawingPen() const;
     QPixmap flattenDrawings() const;
 };
+
+Q_DECLARE_OPERATORS_FOR_FLAGS(QVGraphicsView::CropHandles)
+
 #endif // QVGRAPHICSVIEW_H

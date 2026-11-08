@@ -3,8 +3,11 @@
 #include "qvwin32functions.h"
 #include "qvcocoafunctions.h"
 #include "qvlinuxx11functions.h"
+
+#include <array>
 #include <cstring>
 #include <random>
+
 #include <QMessageBox>
 #include <QDir>
 #include <QUrl>
@@ -17,21 +20,108 @@
 #include <QSaveFile>
 #include <QImageWriter>
 #include <QtMath>
-#include <QtConcurrent/QtConcurrentRun>
 #include <QThread>
 #include <QFuture>
 
 namespace {
 
+constexpr int channelLevels = 256;
+constexpr int minAdjustment = -100;
+constexpr int maxAdjustment = 100;
+constexpr qint64 parallelPixelThreshold = 1000000;
+
+using ChannelLut = std::array<uchar, channelLevels>;
+
+struct ToneCurves
+{
+    ChannelLut red{};
+    ChannelLut green{};
+    ChannelLut blue{};
+};
+
 QByteArray imageFormatForPath(const QString &filePath)
 {
-    QString suffix = QFileInfo(filePath).suffix().toLower();
-    if (suffix == "jpg" || suffix == "jpe" || suffix == "jfif")
-        suffix = "jpeg";
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    if (suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpe")
+        || suffix == QStringLiteral("jfif"))
+        return QByteArrayLiteral("jpeg");
     return suffix.toUtf8();
 }
 
+int clampAdjustment(int value)
+{
+    return qBound(minAdjustment, value, maxAdjustment);
 }
+
+ToneCurves buildToneCurves(int brightness, int contrast, int warmth)
+{
+    // Gentle, mobile-gallery-style response curve:
+    // - Brightness uses a smooth quadratic shadow/highlight-preserving curve (lifts midtones by up
+    //   to ±32 while tapering off near 0 and 255) plus a small endpoint shift (±12).
+    // - Contrast uses a subtle multiplier (~0.65x at -100 to ~1.55x at +100) around mid-gray.
+    // - Warmth shifts R and B in opposite directions with midtone weighting.
+    const qreal brightnessNorm = brightness / 100.0;
+    const qreal midtoneShift = brightnessNorm * 32.0;
+    const qreal endpointShift = brightnessNorm * 12.0;
+
+    const qreal contrastNorm = contrast / 100.0;
+    const qreal contrastFactor = qPow(1.55, contrastNorm);
+
+    const qreal warmthNorm = warmth / 100.0;
+    const qreal warmRed = warmthNorm * 24.0;
+    const qreal warmGreen = warmthNorm * 4.0;
+    const qreal warmBlue = -warmthNorm * 24.0;
+
+    ToneCurves curves;
+    for (int level = 0; level < channelLevels; ++level) {
+        const qreal normalized = level / 255.0;
+        // 4 * t * (1 - t) peaks at 1.0 in midtones and tapers to 0 at pure black/white
+        const qreal midtoneWeight = 4.0 * normalized * (1.0 - normalized);
+        const qreal brightened = level + midtoneShift * midtoneWeight + endpointShift;
+        const qreal contrasted = ((brightened - 128.0) * contrastFactor) + 128.0;
+        const qreal warmWeight = 0.35 + 0.65 * midtoneWeight;
+        curves.red[level] = static_cast<uchar>(
+                qBound(0, qRound(contrasted + warmRed * warmWeight), 255));
+        curves.green[level] = static_cast<uchar>(
+                qBound(0, qRound(contrasted + warmGreen * warmWeight), 255));
+        curves.blue[level] = static_cast<uchar>(
+                qBound(0, qRound(contrasted + warmBlue * warmWeight), 255));
+    }
+    return curves;
+}
+
+int saturationFixedPoint(int saturation)
+{
+    // 256 == 1.0x; 0 at -100, 448 (~1.75x) at +100
+    return saturation >= 0 ? 256 + (saturation * 192) / 100
+                           : 256 + (saturation * 256) / 100;
+}
+
+QRgb applyToneCurves(QRgb pixel, const ToneCurves &curves)
+{
+    return (pixel & 0xFF000000u)
+            | (static_cast<QRgb>(curves.red[qRed(pixel)]) << 16)
+            | (static_cast<QRgb>(curves.green[qGreen(pixel)]) << 8)
+            | static_cast<QRgb>(curves.blue[qBlue(pixel)]);
+}
+
+QRgb applySaturation(QRgb pixel, const ToneCurves &curves, int saturationFp)
+{
+    int red = curves.red[qRed(pixel)];
+    int green = curves.green[qGreen(pixel)];
+    int blue = curves.blue[qBlue(pixel)];
+
+    // Rec.709 luma in 8-bit fixed-point
+    const int luma = (54 * red + 183 * green + 19 * blue) >> 8;
+    red = qBound(0, luma + (((red - luma) * saturationFp) >> 8), 255);
+    green = qBound(0, luma + (((green - luma) * saturationFp) >> 8), 255);
+    blue = qBound(0, luma + (((blue - luma) * saturationFp) >> 8), 255);
+
+    return (pixel & 0xFF000000u) | (static_cast<QRgb>(red) << 16)
+            | (static_cast<QRgb>(green) << 8) | static_cast<QRgb>(blue);
+}
+
+} // namespace
 
 QCache<QString, QVImageCore::ReadData> QVImageCore::imageCache;
 
@@ -733,10 +823,10 @@ QImage QVImageCore::applyBrightnessContrast(const QImage &source, int brightness
     if (source.isNull())
         return source;
 
-    brightness = qBound(-100, brightness, 100);
-    contrast = qBound(-100, contrast, 100);
-    saturation = qBound(-100, saturation, 100);
-    warmth = qBound(-100, warmth, 100);
+    brightness = clampAdjustment(brightness);
+    contrast = clampAdjustment(contrast);
+    saturation = clampAdjustment(saturation);
+    warmth = clampAdjustment(warmth);
 
     if (brightness == 0 && contrast == 0 && saturation == 0 && warmth == 0)
         return source;
@@ -747,76 +837,29 @@ QImage QVImageCore::applyBrightnessContrast(const QImage &source, int brightness
     // Opaque images need no (un)premultiplication; keep RGB32 as-is.
     QImage result = source.convertToFormat(opaque ? QImage::Format_RGB32 : QImage::Format_ARGB32);
 
-    // Gentle, mobile-gallery-style response curve:
-    // - Brightness uses a smooth quadratic shadow/highlight-preserving curve (lifts midtones by up
-    //   to ±32 while tapering off near 0 and 255) plus a small endpoint shift (±12).
-    // - Contrast uses a subtle multiplier (~0.65x at -100 to ~1.55x at +100) around mid-gray.
-    // - Warmth shifts R and B in opposite directions with midtone weighting.
-    const qreal bNorm = brightness / 100.0;
-    const qreal midtoneShift = bNorm * 32.0;
-    const qreal endpointShift = bNorm * 12.0;
-
-    const qreal cNorm = contrast / 100.0;
-    const qreal factor = qPow(1.55, cNorm);
-
-    const qreal wNorm = warmth / 100.0;
-    const qreal warmR = wNorm * 24.0;
-    const qreal warmG = wNorm * 4.0;
-    const qreal warmB = -wNorm * 24.0;
-
-    uchar lutR[256];
-    uchar lutG[256];
-    uchar lutB[256];
-    for (int i = 0; i < 256; i++) {
-        const qreal normalized = i / 255.0;
-        // 4 * t * (1 - t) peaks at 1.0 in midtones and tapers to 0 at pure black/white
-        const qreal midtoneWeight = 4.0 * normalized * (1.0 - normalized);
-        const qreal brightened = i + midtoneShift * midtoneWeight + endpointShift;
-        const qreal contrasted = ((brightened - 128.0) * factor) + 128.0;
-        const qreal warmWeight = 0.35 + 0.65 * midtoneWeight;
-        lutR[i] = uchar(qBound(0, qRound(contrasted + warmR * warmWeight), 255));
-        lutG[i] = uchar(qBound(0, qRound(contrasted + warmG * warmWeight), 255));
-        lutB[i] = uchar(qBound(0, qRound(contrasted + warmB * warmWeight), 255));
-    }
-
-    // Saturation in fixed-point (256 = 1.0x; 0 at -100, 448 (~1.75x) at +100)
-    const int satFp = (saturation >= 0) ? (256 + (saturation * 192) / 100)
-                                        : (256 + (saturation * 256) / 100);
-    const bool applySat = (saturation != 0);
+    const ToneCurves curves = buildToneCurves(brightness, contrast, warmth);
+    const int saturationFp = saturationFixedPoint(saturation);
+    const bool applySaturationToChannel = saturation != 0;
 
     const int width = result.width();
     const int height = result.height();
-    const auto processRows = [&result, &lutR, &lutG, &lutB, width, applySat, satFp](int firstRow,
-                                                                                    int lastRow) {
-        for (int y = firstRow; y < lastRow; y++) {
+    const auto processRows = [&result, &curves, width, saturationFp,
+                              applySaturationToChannel](int firstRow, int lastRow) {
+        for (int y = firstRow; y < lastRow; ++y) {
             auto *line = reinterpret_cast<QRgb *>(result.scanLine(y));
-            if (!applySat) {
-                for (int x = 0; x < width; x++) {
-                    const QRgb pixel = line[x];
-                    line[x] = (pixel & 0xFF000000u) | (QRgb(lutR[qRed(pixel)]) << 16)
-                            | (QRgb(lutG[qGreen(pixel)]) << 8) | QRgb(lutB[qBlue(pixel)]);
-                }
+            if (!applySaturationToChannel) {
+                for (int x = 0; x < width; ++x)
+                    line[x] = applyToneCurves(line[x], curves);
             } else {
-                for (int x = 0; x < width; x++) {
-                    const QRgb pixel = line[x];
-                    int r = lutR[qRed(pixel)];
-                    int g = lutG[qGreen(pixel)];
-                    int b = lutB[qBlue(pixel)];
-                    // Rec.709 luma in 8-bit fixed-point
-                    const int luma = (54 * r + 183 * g + 19 * b) >> 8;
-                    r = qBound(0, luma + (((r - luma) * satFp) >> 8), 255);
-                    g = qBound(0, luma + (((g - luma) * satFp) >> 8), 255);
-                    b = qBound(0, luma + (((b - luma) * satFp) >> 8), 255);
-                    line[x] = (pixel & 0xFF000000u) | (QRgb(r) << 16) | (QRgb(g) << 8) | QRgb(b);
-                }
+                for (int x = 0; x < width; ++x)
+                    line[x] = applySaturation(line[x], curves, saturationFp);
             }
         }
     };
 
     // Each thread works on distinct scanlines, so large images can be split safely.
-    constexpr qint64 PARALLEL_PIXEL_THRESHOLD = 1000000;
     const int threadCount = qMin(QThread::idealThreadCount(), height);
-    if (qint64(width) * height < PARALLEL_PIXEL_THRESHOLD || threadCount < 2) {
+    if (static_cast<qint64>(width) * height < parallelPixelThreshold || threadCount < 2) {
         processRows(0, height);
     } else {
         // Detach before sharing the buffer across threads
@@ -845,7 +888,7 @@ bool QVImageCore::saveCopy(const QString &filePath, QString *errorString) const
 
     QByteArray format = imageFormatForPath(filePath);
     if (format.isEmpty())
-        format = "png";
+        format = QByteArrayLiteral("png");
 
     if (!QImageWriter::supportedImageFormats().contains(format)) {
         if (errorString)

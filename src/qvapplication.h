@@ -102,6 +102,7 @@ private:
 
     QFont baseApplicationFont;
     QString baseStyleName;
+    int appliedUiScale = 0;
 
     QStringList nameFilterList;
     QStringList fileExtensionList;

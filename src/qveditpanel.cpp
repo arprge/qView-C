@@ -1,13 +1,15 @@
 #include "qveditpanel.h"
 
+#include <array>
+
 #include <QButtonGroup>
 #include <QColorDialog>
 #include <QConicalGradient>
 #include <QEvent>
+#include <QFontMetrics>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
-#include <QIcon>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -24,14 +26,120 @@
 
 namespace {
 
+constexpr int toolIconSize = 16;
+constexpr int swatchIconSize = 14;
+constexpr qreal iconDevicePixelRatio = 2.0;
+
+constexpr int adjustMinimum = -100;
+constexpr int adjustMaximum = 100;
+constexpr int adjustSingleStep = 2;
+constexpr int adjustPageStep = 10;
+
+constexpr int defaultDrawWidth = 4;
+constexpr int minimumDrawWidth = 1;
+constexpr int maximumDrawWidth = 50;
+
+constexpr int checkerCellCount = 4;
+constexpr int readoutPadding = 6;
+constexpr qreal hintFontScale = 0.88;
+
+QPixmap createIconPixmap(int logicalSize)
+{
+    QPixmap pixmap(logicalSize * 2, logicalSize * 2);
+    pixmap.setDevicePixelRatio(iconDevicePixelRatio);
+    pixmap.fill(Qt::transparent);
+    return pixmap;
+}
+
+QIcon makeSwatchIcon(const QColor &swatchColor, const QColor &borderColor)
+{
+    QPixmap pixmap = createIconPixmap(swatchIconSize);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    const QRectF swatchRect(1.0, 1.0, swatchIconSize - 2.0, swatchIconSize - 2.0);
+    if (swatchColor.alpha() < 255) {
+        QPainterPath clip;
+        clip.addRoundedRect(swatchRect, 3.0, 3.0);
+        painter.save();
+        painter.setClipPath(clip);
+        painter.fillRect(swatchRect, Qt::white);
+
+        const qreal cellSize = swatchRect.width() / checkerCellCount;
+        for (int row = 0; row < checkerCellCount; ++row) {
+            for (int column = 0; column < checkerCellCount; ++column) {
+                if ((row + column) % 2 == 1) {
+                    const QRectF cell(swatchRect.x() + column * cellSize,
+                                      swatchRect.y() + row * cellSize, cellSize, cellSize);
+                    painter.fillRect(cell, QColor(200, 200, 200));
+                }
+            }
+        }
+        painter.restore();
+    }
+
+    painter.setPen(QPen(borderColor, 1.0));
+    painter.setBrush(swatchColor);
+    painter.drawRoundedRect(swatchRect, 3.0, 3.0);
+
+    return QIcon(pixmap);
+}
+
+QIcon makeColorWheelIcon(const QColor &borderColor)
+{
+    QPixmap pixmap = createIconPixmap(swatchIconSize);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    const QRectF ringRect(1.0, 1.0, swatchIconSize - 2.0, swatchIconSize - 2.0);
+    QConicalGradient gradient(ringRect.center(), 90.0);
+
+    const std::array<QColor, 6> wheelColors = {
+        { QColor(239, 68, 68), QColor(245, 158, 11), QColor(234, 179, 8),
+          QColor(16, 185, 129), QColor(59, 130, 246), QColor(168, 85, 247) }
+    };
+    for (int i = 0; i < static_cast<int>(wheelColors.size()); ++i) {
+        const qreal position = static_cast<qreal>(i) / static_cast<qreal>(wheelColors.size());
+        gradient.setColorAt(position, wheelColors.at(i));
+    }
+    gradient.setColorAt(1.0, wheelColors.front());
+
+    painter.setPen(QPen(borderColor, 0.8));
+    painter.setBrush(gradient);
+    painter.drawEllipse(ringRect);
+
+    return QIcon(pixmap);
+}
+
+QFrame *makeVerticalSeparator(QWidget *parent)
+{
+    auto *separator = new QFrame(parent);
+    separator->setFrameShape(QFrame::VLine);
+    separator->setFrameShadow(QFrame::Sunken);
+    return separator;
+}
+
+void setLabelBold(QLabel *label, bool bold)
+{
+    if (label->font().bold() == bold)
+        return;
+
+    QFont font = label->font();
+    font.setBold(bold);
+    label->setFont(font);
+}
+
 // UX-focused slider:
-// - Left-clicking anywhere on the slider jumps straight to that value and drags immediately
-// - Double-clicking or middle-clicking resets the slider to its default value (0 or initial)
+// - Left-clicking anywhere on the slider jumps straight to that value and drags immediately.
+// - Double-clicking or middle-clicking resets the slider to its default value.
 class AdjustSlider : public QSlider
 {
 public:
-    explicit AdjustSlider(int defaultVal, Qt::Orientation orientation, QWidget *parent = nullptr)
-        : QSlider(orientation, parent), defaultValue(defaultVal)
+    explicit AdjustSlider(int defaultValue, Qt::Orientation orientation,
+                          QWidget *parent = nullptr)
+        : QSlider(orientation, parent), defaultValue(defaultValue)
     {
     }
 
@@ -43,11 +151,12 @@ protected:
             event->accept();
             return;
         }
+
         if (event->button() == Qt::LeftButton) {
-            QStyleOptionSlider opt;
-            initStyleOption(&opt);
-            const QRect handleRect =
-                    style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, this);
+            QStyleOptionSlider option;
+            initStyleOption(&option);
+            const QRect handleRect = style()->subControlRect(QStyle::CC_Slider, &option,
+                                                             QStyle::SC_SliderHandle, this);
             if (!handleRect.contains(event->pos())) {
                 trackDragging = true;
                 setSliderDown(true);
@@ -56,6 +165,7 @@ protected:
                 return;
             }
         }
+
         QSlider::mousePressEvent(event);
     }
 
@@ -66,6 +176,7 @@ protected:
             event->accept();
             return;
         }
+
         QSlider::mouseMoveEvent(event);
     }
 
@@ -77,6 +188,7 @@ protected:
             event->accept();
             return;
         }
+
         QSlider::mouseReleaseEvent(event);
     }
 
@@ -89,143 +201,40 @@ protected:
             event->accept();
             return;
         }
+
         QSlider::mouseDoubleClickEvent(event);
     }
 
 private:
-    int valueFromPoint(const QPoint &pt) const
+    int valueFromPoint(const QPoint &position) const
     {
-        QStyleOptionSlider opt;
-        initStyleOption(&opt);
-        const QRect groove =
-                style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, this);
-        const QRect handle =
-                style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, this);
+        QStyleOptionSlider option;
+        initStyleOption(&option);
+
+        const QRect groove = style()->subControlRect(QStyle::CC_Slider, &option,
+                                                     QStyle::SC_SliderGroove, this);
+        const QRect handle = style()->subControlRect(QStyle::CC_Slider, &option,
+                                                     QStyle::SC_SliderHandle, this);
+
         const int handleWidth = handle.isValid() ? handle.width() : 0;
         const int grooveLeft = groove.isValid() ? groove.x() : 0;
-        const int span = (groove.isValid() ? groove.width() : width()) - handleWidth;
-        const int pos = pt.x() - grooveLeft - handleWidth / 2;
-        return QStyle::sliderValueFromPosition(minimum(), maximum(), pos, qMax(1, span),
-                                               opt.upsideDown);
+        const int grooveWidth = groove.isValid() ? groove.width() : width();
+        const int span = grooveWidth - handleWidth;
+        const int positionInGroove = position.x() - grooveLeft - handleWidth / 2;
+
+        return QStyle::sliderValueFromPosition(minimum(), maximum(), positionInGroove,
+                                               qMax(1, span), option.upsideDown);
     }
 
-    int defaultValue;
+    int defaultValue = 0;
     bool trackDragging = false;
 };
-
-enum class ToolIcon { Pen, Line, Rectangle, Ellipse };
-
-QIcon makeToolIcon(ToolIcon type, const QColor &color)
-{
-    constexpr int size = 16;
-    QPixmap pix(size * 2, size * 2);
-    pix.setDevicePixelRatio(2.0);
-    pix.fill(Qt::transparent);
-
-    QPainter p(&pix);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(color, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    p.setBrush(Qt::NoBrush);
-
-    switch (type) {
-    case ToolIcon::Pen: {
-        QPainterPath wave;
-        wave.moveTo(2.5, 12.5);
-        wave.cubicTo(5.0, 4.5, 9.5, 12.5, 13.5, 3.5);
-        p.drawPath(wave);
-        break;
-    }
-    case ToolIcon::Line:
-        p.drawLine(QPointF(3.0, 13.0), QPointF(13.0, 3.0));
-        break;
-    case ToolIcon::Rectangle:
-        p.drawRoundedRect(QRectF(2.5, 3.5, 11.0, 9.0), 1.5, 1.5);
-        break;
-    case ToolIcon::Ellipse:
-        p.drawEllipse(QRectF(2.5, 3.5, 11.0, 9.0));
-        break;
-    }
-
-    return QIcon(pix);
-}
-
-QIcon makeSwatchIcon(const QColor &swatchColor, const QColor &borderColor)
-{
-    constexpr int size = 14;
-    QPixmap pix(size * 2, size * 2);
-    pix.setDevicePixelRatio(2.0);
-    pix.fill(Qt::transparent);
-
-    QPainter p(&pix);
-    p.setRenderHint(QPainter::Antialiasing);
-
-    const QRectF swatchRect(1.0, 1.0, size - 2.0, size - 2.0);
-    if (swatchColor.alpha() < 255) {
-        QPainterPath clip;
-        clip.addRoundedRect(swatchRect, 3.0, 3.0);
-        p.save();
-        p.setClipPath(clip);
-        p.fillRect(swatchRect, Qt::white);
-        const qreal cell = swatchRect.width() / 4.0;
-        for (int r = 0; r < 4; r++) {
-            for (int c = 0; c < 4; c++) {
-                if ((r + c) % 2 == 1) {
-                    p.fillRect(QRectF(swatchRect.x() + c * cell, swatchRect.y() + r * cell, cell,
-                                      cell),
-                               QColor(200, 200, 200));
-                }
-            }
-        }
-        p.restore();
-    }
-
-    p.setPen(QPen(borderColor, 1.0));
-    p.setBrush(swatchColor);
-    p.drawRoundedRect(swatchRect, 3.0, 3.0);
-
-    return QIcon(pix);
-}
-
-QIcon makeColorWheelIcon(const QColor &borderColor)
-{
-    constexpr int size = 14;
-    QPixmap pix(size * 2, size * 2);
-    pix.setDevicePixelRatio(2.0);
-    pix.fill(Qt::transparent);
-
-    QPainter p(&pix);
-    p.setRenderHint(QPainter::Antialiasing);
-
-    const QRectF ringRect(1.0, 1.0, size - 2.0, size - 2.0);
-    QConicalGradient grad(ringRect.center(), 90.0);
-    grad.setColorAt(0.0 / 6.0, QColor(239, 68, 68));
-    grad.setColorAt(1.0 / 6.0, QColor(245, 158, 11));
-    grad.setColorAt(2.0 / 6.0, QColor(234, 179, 8));
-    grad.setColorAt(3.0 / 6.0, QColor(16, 185, 129));
-    grad.setColorAt(4.0 / 6.0, QColor(59, 130, 246));
-    grad.setColorAt(5.0 / 6.0, QColor(168, 85, 247));
-    grad.setColorAt(1.0, QColor(239, 68, 68));
-
-    p.setPen(QPen(borderColor, 0.8));
-    p.setBrush(grad);
-    p.drawEllipse(ringRect);
-
-    return QIcon(pix);
-}
-
-QFrame *makeVerticalSeparator(QWidget *parent)
-{
-    auto *sep = new QFrame(parent);
-    sep->setFrameShape(QFrame::VLine);
-    sep->setFrameShadow(QFrame::Sunken);
-    return sep;
-}
 
 } // namespace
 
 QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
 {
-    setObjectName("editPanel");
+    setObjectName(QStringLiteral("editPanel"));
     setFocusPolicy(Qt::NoFocus);
     setAutoFillBackground(true);
     setBackgroundRole(QPalette::Window);
@@ -248,61 +257,76 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
     stack->setFocusPolicy(Qt::NoFocus);
     contentLayout->addWidget(stack);
 
-    // -------------------------------------------------------------------------
-    // 1. Crop Page (UX-focused: aspect ratio presets, live W×H readout, Reset,
-    //    and compact shortcut hints at the bottom)
-    // -------------------------------------------------------------------------
+    createCropPage();
+    createAdjustPage();
+    createDrawPage();
+
+    updateCropHintStyle();
+    updateAdjustReadoutWidths();
+    updateThemeIcons();
+    updateColorButtons();
+    updateAdjustLabels();
+    setMode(QVGraphicsView::EditMode::Crop);
+}
+
+void QVEditPanel::createCropPage()
+{
+    struct AspectPreset
+    {
+        QString label;
+        QString tooltip;
+        QSizeF ratio;
+    };
+
+    const std::array<AspectPreset, 5> presets = {
+        { { tr("Free"), tr("Freeform crop (hold Shift for 1:1 square)"), QSizeF(0, 0) },
+          { tr("Original"), tr("Lock to original image aspect ratio"), QSizeF(-1, -1) },
+          { QStringLiteral("1:1"), tr("Square aspect ratio (1:1)"), QSizeF(1, 1) },
+          { QStringLiteral("4:3"), tr("Standard aspect ratio (4:3)"), QSizeF(4, 3) },
+          { QStringLiteral("16:9"), tr("Widescreen aspect ratio (16:9)"), QSizeF(16, 9) } }
+    };
+
     cropPage = new QWidget(stack);
     auto *cropLayout = new QVBoxLayout(cropPage);
     cropLayout->setContentsMargins(0, 0, 0, 0);
     cropLayout->setSpacing(0);
 
-    auto *cropControlsRow = new QHBoxLayout();
-    cropControlsRow->setContentsMargins(0, 0, 0, 0);
-    cropControlsRow->setSpacing(4);
+    auto *controlsRow = new QHBoxLayout();
+    controlsRow->setContentsMargins(0, 0, 0, 0);
+    controlsRow->setSpacing(4);
 
     auto *aspectGroup = new QButtonGroup(cropPage);
-    const struct
-    {
-        QString text;
-        QString tooltip;
-        QSizeF ratio;
-    } ratios[] = {
-        { tr("Free"), tr("Freeform crop (hold Shift for 1:1 square)"), QSizeF(0, 0) },
-        { tr("Original"), tr("Lock to original image aspect ratio"), QSizeF(-1, -1) },
-        { QStringLiteral("1:1"), tr("Square aspect ratio (1:1)"), QSizeF(1, 1) },
-        { QStringLiteral("4:3"), tr("Standard aspect ratio (4:3)"), QSizeF(4, 3) },
-        { QStringLiteral("16:9"), tr("Widescreen aspect ratio (16:9)"), QSizeF(16, 9) },
-    };
-    for (int i = 0; i < 5; i++) {
-        const auto &entry = ratios[i];
-        auto *btn = new QToolButton(cropPage);
-        btn->setText(entry.text);
-        btn->setToolTip(entry.tooltip);
-        btn->setAutoRaise(true);
-        btn->setCheckable(true);
-        btn->setFocusPolicy(Qt::NoFocus);
-        btn->setChecked(i == 0);
-        aspectGroup->addButton(btn);
-        aspectButtons.append(btn);
-        cropControlsRow->addWidget(btn);
+    bool firstPreset = true;
+    for (const AspectPreset &preset : presets) {
+        auto *button = new QToolButton(cropPage);
+        button->setText(preset.label);
+        button->setToolTip(preset.tooltip);
+        button->setAutoRaise(true);
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setChecked(firstPreset);
+        firstPreset = false;
 
-        const QSizeF ratio = entry.ratio;
-        connect(btn, &QToolButton::clicked, this, [this, ratio]() {
+        aspectGroup->addButton(button);
+        aspectButtons.append(button);
+        controlsRow->addWidget(button);
+
+        const QSizeF ratio = preset.ratio;
+        connect(button, &QToolButton::clicked, this, [this, ratio]() {
             if (cropResetButton && ratio.isValid() && !ratio.isNull())
                 cropResetButton->setEnabled(true);
             emit cropAspectRatioChanged(ratio);
         });
     }
 
-    cropControlsRow->addWidget(makeVerticalSeparator(cropPage));
+    controlsRow->addWidget(makeVerticalSeparator(cropPage));
 
     cropSizeLabel = new QLabel(cropPage);
     cropSizeLabel->setFocusPolicy(Qt::NoFocus);
     cropSizeLabel->setToolTip(tr("Current crop dimensions in pixels"));
-    cropControlsRow->addWidget(cropSizeLabel);
+    controlsRow->addWidget(cropSizeLabel);
 
-    cropControlsRow->addStretch();
+    controlsRow->addStretch();
 
     cropResetButton = new QPushButton(tr("Reset"), cropPage);
     cropResetButton->setFocusPolicy(Qt::NoFocus);
@@ -313,78 +337,80 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
             aspectButtons.first()->setChecked(true);
         emit resetCropRequested();
     });
-    cropControlsRow->addWidget(cropResetButton);
-    cropLayout->addLayout(cropControlsRow);
+    controlsRow->addWidget(cropResetButton);
+    cropLayout->addLayout(controlsRow);
 
-    auto *cropHintRow = new QHBoxLayout();
-    cropHintRow->setContentsMargins(0, 0, 0, 0);
-    cropHintRow->setSpacing(0);
-    cropHintRow->addStretch();
+    auto *hintRow = new QHBoxLayout();
+    hintRow->setContentsMargins(0, 0, 0, 0);
+    hintRow->setSpacing(0);
+    hintRow->addStretch();
 
-    cropHint = new QLabel(
-            tr("Enter: Save copy · Ctrl+Enter: Replace · Esc: Cancel"),
-            cropPage);
+    cropHint = new QLabel(tr("Enter: Save copy · Ctrl+Enter: Replace · Esc: Cancel"), cropPage);
     cropHint->setFocusPolicy(Qt::NoFocus);
-    cropHint->setMargin(0);
     cropHint->setContentsMargins(0, 0, 0, 0);
     cropHint->setAlignment(Qt::AlignCenter);
-    cropHintRow->addWidget(cropHint);
-    cropHintRow->addStretch();
-    cropLayout->addLayout(cropHintRow);
+    hintRow->addWidget(cropHint);
+    hintRow->addStretch();
+    cropLayout->addLayout(hintRow);
 
     stack->addWidget(cropPage);
+}
 
-    // -------------------------------------------------------------------------
-    // 2. Adjust Page (UX-focused: 2x2 grid, click-to-jump + double-click reset,
-    //    Compare original hold button, smart Reset)
-    // -------------------------------------------------------------------------
+void QVEditPanel::createAdjustControl(QGridLayout *grid, int row, int columnGroup,
+                                      const QString &labelText, AdjustControl &control)
+{
+    constexpr int columnsPerControl = 3;
+    const int baseColumn = columnGroup * columnsPerControl;
+
+    auto *label = new QLabel(labelText, adjustPage);
+    label->setFocusPolicy(Qt::NoFocus);
+
+    control.slider = new AdjustSlider(0, Qt::Horizontal, adjustPage);
+    control.slider->setRange(adjustMinimum, adjustMaximum);
+    control.slider->setSingleStep(adjustSingleStep);
+    control.slider->setPageStep(adjustPageStep);
+    control.slider->setValue(0);
+    control.slider->setMinimumWidth(100);
+    control.slider->setToolTip(
+            tr("%1 — click or drag to adjust, double-click to reset").arg(labelText));
+    control.slider->setFocusPolicy(Qt::NoFocus);
+
+    control.valueLabel = new QLabel(QStringLiteral("0"), adjustPage);
+    control.valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    control.valueLabel->setFocusPolicy(Qt::NoFocus);
+
+    grid->addWidget(label, row, baseColumn);
+    grid->addWidget(control.slider, row, baseColumn + 1);
+    grid->addWidget(control.valueLabel, row, baseColumn + 2);
+    grid->setColumnStretch(baseColumn + 1, 1);
+
+    connect(control.slider, &QSlider::valueChanged, this, &QVEditPanel::emitAdjustChanged);
+}
+
+void QVEditPanel::createAdjustPage()
+{
     adjustPage = new QWidget(stack);
-    auto *adjustRowLayout = new QHBoxLayout(adjustPage);
-    adjustRowLayout->setContentsMargins(0, 0, 0, 0);
-    adjustRowLayout->setSpacing(10);
 
-    auto *adjustGrid = new QGridLayout();
-    adjustGrid->setContentsMargins(0, 0, 0, 0);
-    adjustGrid->setHorizontalSpacing(6);
-    adjustGrid->setVerticalSpacing(2);
+    auto *rowLayout = new QHBoxLayout(adjustPage);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    rowLayout->setSpacing(10);
 
-    const auto addAdjustSlider = [this, adjustGrid](int row, int colGroup, const QString &labelText,
-                                                  QSlider *&slider, QLabel *&valueLabel) {
-        const int baseCol = colGroup * 3;
+    auto *grid = new QGridLayout();
+    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setHorizontalSpacing(6);
+    grid->setVerticalSpacing(2);
 
-        auto *label = new QLabel(labelText, adjustPage);
-        label->setFocusPolicy(Qt::NoFocus);
+    createAdjustControl(grid, 0, 0, tr("Brightness"), brightnessControl);
+    createAdjustControl(grid, 0, 1, tr("Contrast"), contrastControl);
+    createAdjustControl(grid, 1, 0, tr("Saturation"), saturationControl);
+    createAdjustControl(grid, 1, 1, tr("Warmth"), warmthControl);
 
-        slider = new AdjustSlider(0, Qt::Horizontal, adjustPage);
-        slider->setRange(-100, 100);
-        slider->setSingleStep(2);
-        slider->setPageStep(10);
-        slider->setValue(0);
-        slider->setMinimumWidth(100);
-        slider->setToolTip(tr("%1 — click or drag to adjust, double-click to reset").arg(labelText));
-        slider->setFocusPolicy(Qt::NoFocus);
+    rowLayout->addLayout(grid, 1);
+    rowLayout->addWidget(makeVerticalSeparator(adjustPage));
 
-        valueLabel = new QLabel(QStringLiteral("0"), adjustPage);
-        valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        valueLabel->setFocusPolicy(Qt::NoFocus);
-
-        adjustGrid->addWidget(label, row, baseCol);
-        adjustGrid->addWidget(slider, row, baseCol + 1);
-        adjustGrid->addWidget(valueLabel, row, baseCol + 2);
-        adjustGrid->setColumnStretch(baseCol + 1, 1);
-    };
-
-    addAdjustSlider(0, 0, tr("Brightness"), brightnessSlider, brightnessValueLabel);
-    addAdjustSlider(0, 1, tr("Contrast"), contrastSlider, contrastValueLabel);
-    addAdjustSlider(1, 0, tr("Saturation"), saturationSlider, saturationValueLabel);
-    addAdjustSlider(1, 1, tr("Warmth"), warmthSlider, warmthValueLabel);
-
-    adjustRowLayout->addLayout(adjustGrid, 1);
-    adjustRowLayout->addWidget(makeVerticalSeparator(adjustPage));
-
-    auto *adjustActions = new QVBoxLayout();
-    adjustActions->setContentsMargins(0, 0, 0, 0);
-    adjustActions->setSpacing(2);
+    auto *actions = new QVBoxLayout();
+    actions->setContentsMargins(0, 0, 0, 0);
+    actions->setSpacing(2);
 
     compareButton = new QPushButton(tr("Compare"), adjustPage);
     compareButton->setFocusPolicy(Qt::NoFocus);
@@ -397,50 +423,62 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
     resetButton = new QPushButton(tr("Reset"), adjustPage);
     resetButton->setFocusPolicy(Qt::NoFocus);
     resetButton->setToolTip(tr("Reset all adjustments to 0"));
+    connect(resetButton, &QPushButton::clicked, this, [this]() {
+        resetAdjustSliders();
+        emitAdjustChanged();
+    });
 
-    adjustActions->addWidget(compareButton);
-    adjustActions->addWidget(resetButton);
-    adjustRowLayout->addLayout(adjustActions);
+    actions->addWidget(compareButton);
+    actions->addWidget(resetButton);
+    rowLayout->addLayout(actions);
+
     stack->addWidget(adjustPage);
+}
 
-    // -------------------------------------------------------------------------
-    // 3. Draw Page (UX-focused: native theme-aware tool buttons, quick swatches,
-    //    direct width slider + spinbox, state-aware Undo & Clear)
-    // -------------------------------------------------------------------------
+void QVEditPanel::createDrawPage()
+{
+    struct ToolPreset
+    {
+        QString label;
+        QVGraphicsView::DrawSettings::Tool tool;
+        ToolIcon icon;
+        QString tooltip;
+    };
+
+    const std::array<ToolPreset, 4> tools = {
+        { { tr("Pen"), QVGraphicsView::DrawSettings::Tool::Pen, ToolIcon::Pen, QString() },
+          { tr("Line"), QVGraphicsView::DrawSettings::Tool::Line, ToolIcon::Line,
+            tr("Line (hold Shift to snap angle)") },
+          { tr("Rectangle"), QVGraphicsView::DrawSettings::Tool::Rectangle, ToolIcon::Rectangle,
+            tr("Rectangle (hold Shift for square)") },
+          { tr("Ellipse"), QVGraphicsView::DrawSettings::Tool::Ellipse, ToolIcon::Ellipse,
+            tr("Ellipse (hold Shift for circle)") } }
+    };
+
     drawPage = new QWidget(stack);
+
     auto *drawLayout = new QHBoxLayout(drawPage);
     drawLayout->setContentsMargins(0, 0, 0, 0);
     drawLayout->setSpacing(4);
 
     auto *toolGroup = new QButtonGroup(drawPage);
-    const struct
-    {
-        QString text;
-        QVGraphicsView::DrawSettings::Tool tool;
-    } tools[] = {
-        { tr("Pen"), QVGraphicsView::DrawSettings::Tool::Pen },
-        { tr("Line"), QVGraphicsView::DrawSettings::Tool::Line },
-        { tr("Rectangle"), QVGraphicsView::DrawSettings::Tool::Rectangle },
-        { tr("Ellipse"), QVGraphicsView::DrawSettings::Tool::Ellipse },
-    };
-    for (const auto &entry : tools) {
+    for (const ToolPreset &preset : tools) {
         auto *button = new QToolButton(drawPage);
-        button->setText(entry.text);
+        button->setText(preset.label);
         button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         button->setAutoRaise(true);
         button->setCheckable(true);
         button->setFocusPolicy(Qt::NoFocus);
-        button->setChecked(entry.tool == currentDrawSettings.tool);
-        if (entry.tool == QVGraphicsView::DrawSettings::Tool::Line)
-            button->setToolTip(tr("Line (hold Shift to snap angle)"));
-        else if (entry.tool == QVGraphicsView::DrawSettings::Tool::Rectangle)
-            button->setToolTip(tr("Rectangle (hold Shift for square)"));
-        else if (entry.tool == QVGraphicsView::DrawSettings::Tool::Ellipse)
-            button->setToolTip(tr("Ellipse (hold Shift for circle)"));
+        button->setChecked(preset.tool == currentDrawSettings.tool);
+        if (!preset.tooltip.isEmpty())
+            button->setToolTip(preset.tooltip);
+
         toolGroup->addButton(button);
         toolButtons.append(button);
+        toolIconTypes.append(preset.icon);
         drawLayout->addWidget(button);
-        const auto tool = entry.tool;
+
+        const auto tool = preset.tool;
         connect(button, &QToolButton::clicked, this, [this, tool]() {
             currentDrawSettings.tool = tool;
             emit drawSettingsChanged(currentDrawSettings);
@@ -450,24 +488,26 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
     drawLayout->addWidget(makeVerticalSeparator(drawPage));
 
     presetColors = {
-        QColor("#EF4444"), // Red
-        QColor("#F59E0B"), // Amber
-        QColor("#10B981"), // Green
-        QColor("#3B82F6"), // Blue
-        QColor("#FFFFFF"), // White
-        QColor("#111111"), // Black
+        QColor(QStringLiteral("#EF4444")), // Red
+        QColor(QStringLiteral("#F59E0B")), // Amber
+        QColor(QStringLiteral("#10B981")), // Green
+        QColor(QStringLiteral("#3B82F6")), // Blue
+        QColor(QStringLiteral("#FFFFFF")), // White
+        QColor(QStringLiteral("#111111")), // Black
     };
     currentDrawSettings.color = presetColors.first();
 
     auto *colorGroup = new QButtonGroup(drawPage);
-    for (int i = 0; i < presetColors.size(); i++) {
+    for (int i = 0; i < presetColors.size(); ++i) {
         const QColor swatchColor = presetColors.at(i);
+
         auto *swatch = new QToolButton(drawPage);
         swatch->setAutoRaise(true);
         swatch->setCheckable(true);
         swatch->setFocusPolicy(Qt::NoFocus);
         swatch->setToolTip(swatchColor.name());
         swatch->setChecked(i == 0);
+
         colorGroup->addButton(swatch);
         swatchButtons.append(swatch);
         drawLayout->addWidget(swatch);
@@ -493,13 +533,12 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
         const QColor color = QColorDialog::getColor(currentDrawSettings.color, this,
                                                     tr("Select Color"),
                                                     QColorDialog::ShowAlphaChannel);
-        if (!color.isValid()) {
-            updateColorButtons();
-            return;
-        }
-        currentDrawSettings.color = color;
+        if (color.isValid())
+            currentDrawSettings.color = color;
+
         updateColorButtons();
-        emit drawSettingsChanged(currentDrawSettings);
+        if (color.isValid())
+            emit drawSettingsChanged(currentDrawSettings);
     });
 
     drawLayout->addWidget(makeVerticalSeparator(drawPage));
@@ -507,16 +546,17 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
     auto *widthLabel = new QLabel(tr("Size"), drawPage);
     widthLabel->setFocusPolicy(Qt::NoFocus);
 
-    widthSlider = new AdjustSlider(4, Qt::Horizontal, drawPage);
-    widthSlider->setRange(1, 50);
+    widthSlider = new AdjustSlider(defaultDrawWidth, Qt::Horizontal, drawPage);
+    widthSlider->setRange(minimumDrawWidth, maximumDrawWidth);
     widthSlider->setValue(currentDrawSettings.width);
     widthSlider->setMinimumWidth(60);
     widthSlider->setMaximumWidth(110);
-    widthSlider->setToolTip(tr("Stroke width (double-click to reset to 4 px)"));
+    widthSlider->setToolTip(tr("Stroke width (double-click to reset to %1 px)")
+                                    .arg(defaultDrawWidth));
     widthSlider->setFocusPolicy(Qt::NoFocus);
 
     widthSpin = new QSpinBox(drawPage);
-    widthSpin->setRange(1, 50);
+    widthSpin->setRange(minimumDrawWidth, maximumDrawWidth);
     widthSpin->setValue(currentDrawSettings.width);
     widthSpin->setSuffix(tr(" px"));
     widthSpin->setFocusPolicy(Qt::NoFocus);
@@ -553,47 +593,14 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
 
     drawLayout->addWidget(undoButton);
     drawLayout->addWidget(clearButton);
+
     stack->addWidget(drawPage);
-
-    // -------------------------------------------------------------------------
-    // Signal connections for Adjust
-    // -------------------------------------------------------------------------
-    const auto emitAdjustChanged = [this]() {
-        updateAdjustLabels();
-        emit brightnessContrastChanged(brightnessSlider->value(), contrastSlider->value(),
-                                       saturationSlider->value(), warmthSlider->value());
-    };
-    connect(brightnessSlider, &QSlider::valueChanged, this, emitAdjustChanged);
-    connect(contrastSlider, &QSlider::valueChanged, this, emitAdjustChanged);
-    connect(saturationSlider, &QSlider::valueChanged, this, emitAdjustChanged);
-    connect(warmthSlider, &QSlider::valueChanged, this, emitAdjustChanged);
-
-    connect(resetButton, &QPushButton::clicked, this, [this]() {
-        {
-            const QSignalBlocker brightnessBlocker(brightnessSlider);
-            const QSignalBlocker contrastBlocker(contrastSlider);
-            const QSignalBlocker saturationBlocker(saturationSlider);
-            const QSignalBlocker warmthBlocker(warmthSlider);
-            brightnessSlider->setValue(0);
-            contrastSlider->setValue(0);
-            saturationSlider->setValue(0);
-            warmthSlider->setValue(0);
-        }
-        updateAdjustLabels();
-        emit brightnessContrastChanged(0, 0, 0, 0);
-    });
-
-    updateCropHintStyle();
-    updateAdjustReadoutWidths();
-    updateThemeIcons();
-    updateColorButtons();
-    updateAdjustLabels();
-    setMode(QVGraphicsView::EditMode::Crop);
 }
 
 void QVEditPanel::changeEvent(QEvent *event)
 {
-    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange) {
+    if (event->type() == QEvent::PaletteChange
+        || event->type() == QEvent::ApplicationPaletteChange) {
         updateThemeIcons();
         updateColorButtons();
         updateCropHintStyle();
@@ -602,33 +609,25 @@ void QVEditPanel::changeEvent(QEvent *event)
         updateAdjustReadoutWidths();
         updateCropHintStyle();
     }
+
     QWidget::changeEvent(event);
 }
 
 void QVEditPanel::setMode(QVGraphicsView::EditMode mode)
 {
     QWidget *targetPage = nullptr;
+
     switch (mode) {
     case QVGraphicsView::EditMode::Crop:
         if (!aspectButtons.isEmpty())
             aspectButtons.first()->setChecked(true);
         targetPage = cropPage;
         break;
-    case QVGraphicsView::EditMode::Adjust: {
-        {
-            const QSignalBlocker brightnessBlocker(brightnessSlider);
-            const QSignalBlocker contrastBlocker(contrastSlider);
-            const QSignalBlocker saturationBlocker(saturationSlider);
-            const QSignalBlocker warmthBlocker(warmthSlider);
-            brightnessSlider->setValue(0);
-            contrastSlider->setValue(0);
-            saturationSlider->setValue(0);
-            warmthSlider->setValue(0);
-        }
+    case QVGraphicsView::EditMode::Adjust:
+        resetAdjustSliders();
         updateAdjustLabels();
         targetPage = adjustPage;
         break;
-    }
     case QVGraphicsView::EditMode::Draw:
         setDrawHistoryCount(0);
         emit drawSettingsChanged(currentDrawSettings);
@@ -639,12 +638,13 @@ void QVEditPanel::setMode(QVGraphicsView::EditMode mode)
     }
 
     // Collapse unused pages so each mode sizes strictly to its own controls
-    for (int i = 0; i < stack->count(); i++) {
+    for (int i = 0; i < stack->count(); ++i) {
         QWidget *page = stack->widget(i);
         const QSizePolicy::Policy policy =
                 page == targetPage ? QSizePolicy::Preferred : QSizePolicy::Ignored;
         page->setSizePolicy(policy, policy);
     }
+
     stack->setCurrentWidget(targetPage);
     stack->updateGeometry();
     updateGeometry();
@@ -657,45 +657,18 @@ void QVEditPanel::setCropDimensions(const QRect &rect, const QSize &imageSize)
 
     if (rect.isEmpty() || imageSize.isEmpty()) {
         cropSizeLabel->clear();
+        setLabelBold(cropSizeLabel, false);
         cropResetButton->setEnabled(false);
         return;
     }
 
-    const bool modified = (rect != QRect(QPoint(0, 0), imageSize));
+    const bool modified = rect != QRect(QPoint(0, 0), imageSize);
     cropSizeLabel->setText(tr("%1 × %2 px").arg(rect.width()).arg(rect.height()));
-    QFont f = cropSizeLabel->font();
-    f.setBold(modified);
-    cropSizeLabel->setFont(f);
+    setLabelBold(cropSizeLabel, modified);
 
-    const bool nonFreeRatio = !aspectButtons.isEmpty() && !aspectButtons.first()->isChecked();
-    cropResetButton->setEnabled(modified || nonFreeRatio);
-}
-
-void QVEditPanel::updateCropHintStyle()
-{
-    if (!cropHint)
-        return;
-
-    QFont hintFont = font();
-    if (hintFont.pointSizeF() > 0)
-        hintFont.setPointSizeF(hintFont.pointSizeF() * 0.88);
-    else if (hintFont.pixelSize() > 0)
-        hintFont.setPixelSize(qMax(9, hintFont.pixelSize() - 2));
-    else
-        hintFont.setPointSize(qMax(8, hintFont.pointSize() - 1));
-    cropHint->setFont(hintFont);
-    cropHint->setMargin(0);
-    cropHint->setContentsMargins(0, 0, 0, 0);
-    cropHint->setFixedHeight(cropHint->fontMetrics().height());
-
-    QColor hintColor = palette().color(QPalette::PlaceholderText);
-    if (hintColor == palette().color(QPalette::WindowText)) {
-        hintColor = palette().color(QPalette::WindowText);
-        hintColor.setAlpha(170);
-    }
-    QPalette pal = cropHint->palette();
-    pal.setColor(QPalette::WindowText, hintColor);
-    cropHint->setPalette(pal);
+    const bool hasFixedAspectRatio =
+            !aspectButtons.isEmpty() && !aspectButtons.first()->isChecked();
+    cropResetButton->setEnabled(modified || hasFixedAspectRatio);
 }
 
 void QVEditPanel::setDrawHistoryCount(int count)
@@ -707,71 +680,111 @@ void QVEditPanel::setDrawHistoryCount(int count)
 
 int QVEditPanel::brightness() const
 {
-    return brightnessSlider->value();
+    return brightnessControl.slider->value();
 }
 
 int QVEditPanel::contrast() const
 {
-    return contrastSlider->value();
+    return contrastControl.slider->value();
 }
 
 int QVEditPanel::saturation() const
 {
-    return saturationSlider->value();
+    return saturationControl.slider->value();
 }
 
 int QVEditPanel::warmth() const
 {
-    return warmthSlider->value();
+    return warmthControl.slider->value();
+}
+
+void QVEditPanel::resetAdjustSliders()
+{
+    const std::array<QSlider *, 4> sliders = { brightnessControl.slider, contrastControl.slider,
+                                               saturationControl.slider, warmthControl.slider };
+    for (QSlider *slider : sliders) {
+        const QSignalBlocker blocker(slider);
+        slider->setValue(0);
+    }
+}
+
+void QVEditPanel::emitAdjustChanged()
+{
+    updateAdjustLabels();
+    emit brightnessContrastChanged(brightness(), contrast(), saturation(), warmth());
+}
+
+void QVEditPanel::updateCropHintStyle()
+{
+    if (!cropHint)
+        return;
+
+    QFont hintFont = font();
+    if (hintFont.pointSizeF() > 0) {
+        hintFont.setPointSizeF(hintFont.pointSizeF() * hintFontScale);
+    } else if (hintFont.pixelSize() > 0) {
+        hintFont.setPixelSize(qMax(9, hintFont.pixelSize() - 2));
+    } else {
+        hintFont.setPointSize(qMax(8, hintFont.pointSize() - 1));
+    }
+    cropHint->setFont(hintFont);
+    cropHint->setContentsMargins(0, 0, 0, 0);
+    cropHint->setFixedHeight(cropHint->fontMetrics().height());
+
+    QColor hintColor = palette().color(QPalette::PlaceholderText);
+    if (hintColor == palette().color(QPalette::WindowText)) {
+        hintColor = palette().color(QPalette::WindowText);
+        hintColor.setAlpha(170);
+    }
+
+    QPalette hintPalette = cropHint->palette();
+    hintPalette.setColor(QPalette::WindowText, hintColor);
+    cropHint->setPalette(hintPalette);
 }
 
 void QVEditPanel::updateAdjustLabels()
 {
-    const auto formatSigned = [](QSlider *slider, QLabel *label) {
-        const int v = slider->value();
-        label->setText(v > 0 ? QStringLiteral("+%1").arg(v) : QString::number(v));
-        QFont f = label->font();
-        f.setBold(v != 0);
-        label->setFont(f);
+    const std::array<AdjustControl *, 4> controls = {
+        { &brightnessControl, &contrastControl, &saturationControl, &warmthControl }
     };
-    formatSigned(brightnessSlider, brightnessValueLabel);
-    formatSigned(contrastSlider, contrastValueLabel);
-    formatSigned(saturationSlider, saturationValueLabel);
-    formatSigned(warmthSlider, warmthValueLabel);
 
-    const bool anyModified = brightnessSlider->value() != 0 || contrastSlider->value() != 0
-            || saturationSlider->value() != 0 || warmthSlider->value() != 0;
+    bool anyModified = false;
+    for (const AdjustControl *control : controls) {
+        const int value = control->slider->value();
+        control->valueLabel->setText(value > 0 ? QStringLiteral("+%1").arg(value)
+                                               : QString::number(value));
+        setLabelBold(control->valueLabel, value != 0);
+        anyModified = anyModified || value != 0;
+    }
+
     resetButton->setEnabled(anyModified);
     compareButton->setEnabled(anyModified);
 }
 
 void QVEditPanel::updateAdjustReadoutWidths()
 {
-    if (!brightnessValueLabel || !contrastValueLabel || !saturationValueLabel || !warmthValueLabel)
-        return;
-
     QFont boldFont = font();
     boldFont.setBold(true);
     const QFontMetrics boldMetrics(boldFont);
-    const int readoutWidth = qMax(boldMetrics.horizontalAdvance(QStringLiteral("+100")),
-                                  boldMetrics.horizontalAdvance(QStringLiteral("-100")))
-            + 6;
-    brightnessValueLabel->setFixedWidth(readoutWidth);
-    contrastValueLabel->setFixedWidth(readoutWidth);
-    saturationValueLabel->setFixedWidth(readoutWidth);
-    warmthValueLabel->setFixedWidth(readoutWidth);
+    const int readoutWidth =
+            qMax(boldMetrics.horizontalAdvance(QStringLiteral("+100")),
+                 boldMetrics.horizontalAdvance(QStringLiteral("-100")))
+            + readoutPadding;
+
+    const std::array<AdjustControl *, 4> controls = {
+        { &brightnessControl, &contrastControl, &saturationControl, &warmthControl }
+    };
+    for (const AdjustControl *control : controls) {
+        if (control->valueLabel)
+            control->valueLabel->setFixedWidth(readoutWidth);
+    }
 }
 
 void QVEditPanel::updateThemeIcons()
 {
-    if (toolButtons.isEmpty())
-        return;
-
     const QColor iconColor = palette().color(QPalette::ButtonText);
-    const ToolIcon types[4] = { ToolIcon::Pen, ToolIcon::Line, ToolIcon::Rectangle,
-                                ToolIcon::Ellipse };
-    for (int i = 0; i < toolButtons.size() && i < 4; i++)
-        toolButtons.at(i)->setIcon(makeToolIcon(types[i], iconColor));
+    for (int i = 0; i < toolButtons.size() && i < toolIconTypes.size(); ++i)
+        toolButtons.at(i)->setIcon(createToolIcon(toolIconTypes.at(i), iconColor));
 }
 
 void QVEditPanel::updateColorButtons()
@@ -780,13 +793,15 @@ void QVEditPanel::updateColorButtons()
         return;
 
     const QColor borderColor = palette().color(QPalette::Mid);
+    const QRgb activeColor = currentDrawSettings.color.rgba();
     bool matchedPreset = false;
-    for (int i = 0; i < swatchButtons.size(); i++) {
-        const QColor c = presetColors.at(i);
-        const bool active = (c.rgba() == currentDrawSettings.color.rgba());
-        if (active)
-            matchedPreset = true;
-        swatchButtons.at(i)->setIcon(makeSwatchIcon(c, borderColor));
+
+    for (int i = 0; i < swatchButtons.size() && i < presetColors.size(); ++i) {
+        const QColor presetColor = presetColors.at(i);
+        const bool active = presetColor.rgba() == activeColor;
+        matchedPreset = matchedPreset || active;
+
+        swatchButtons.at(i)->setIcon(makeSwatchIcon(presetColor, borderColor));
         swatchButtons.at(i)->setChecked(active);
     }
 
@@ -794,4 +809,35 @@ void QVEditPanel::updateColorButtons()
                                        ? makeColorWheelIcon(borderColor)
                                        : makeSwatchIcon(currentDrawSettings.color, borderColor));
     customColorButton->setChecked(!matchedPreset);
+}
+
+QIcon QVEditPanel::createToolIcon(ToolIcon type, const QColor &color)
+{
+    QPixmap pixmap = createIconPixmap(toolIconSize);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(color, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+
+    switch (type) {
+    case ToolIcon::Pen: {
+        QPainterPath wave;
+        wave.moveTo(2.5, 12.5);
+        wave.cubicTo(5.0, 4.5, 9.5, 12.5, 13.5, 3.5);
+        painter.drawPath(wave);
+        break;
+    }
+    case ToolIcon::Line:
+        painter.drawLine(QPointF(3.0, 13.0), QPointF(13.0, 3.0));
+        break;
+    case ToolIcon::Rectangle:
+        painter.drawRoundedRect(QRectF(2.5, 3.5, 11.0, 9.0), 1.5, 1.5);
+        break;
+    case ToolIcon::Ellipse:
+        painter.drawEllipse(QRectF(2.5, 3.5, 11.0, 9.0));
+        break;
+    }
+
+    return QIcon(pixmap);
 }

@@ -3,6 +3,9 @@
 #include "qvinfodialog.h"
 #include "qvcocoafunctions.h"
 #include "settingsmanager.h"
+
+#include <array>
+
 #include <QRandomGenerator>
 #include <QWheelEvent>
 #include <QGraphicsPixmapItem>
@@ -23,6 +26,48 @@
 #include <QtMath>
 #include <QGestureEvent>
 #include <QScrollBar>
+
+namespace {
+
+constexpr int maxAdjustment = 100;
+constexpr int maxPreviewDimension = 1920;
+
+constexpr qreal cropHandleHitRadius = 12.0;
+constexpr qreal minimumCropSize = 1.0;
+constexpr qreal minimumCropAspectBaseSize = 16.0;
+constexpr qreal cropGridMinimumSize = 24.0;
+
+constexpr qreal drawingZValue = 5.0;
+constexpr qreal clickDotSegment = 0.01;
+constexpr qreal degenerateDrawingThreshold = 1.0;
+
+constexpr qreal pi = 3.14159265358979323846;
+constexpr qreal snapAngleIncrement = pi / 4.0;
+
+QPointF constrainedDrawingTarget(const QPointF &start, const QPointF &current,
+                                 QVGraphicsView::DrawSettings::Tool tool)
+{
+    const QPointF delta = current - start;
+
+    if (tool == QVGraphicsView::DrawSettings::Tool::Line) {
+        // Snap the line to the nearest 45-degree angle
+        const qreal length = qHypot(delta.x(), delta.y());
+        if (length <= 0.0)
+            return current;
+
+        const qreal angle = qAtan2(delta.y(), delta.x());
+        const qreal snappedAngle = qRound(angle / snapAngleIncrement) * snapAngleIncrement;
+        return start
+                + QPointF(length * qCos(snappedAngle), length * qSin(snappedAngle));
+    }
+
+    // Constrain rectangles and ellipses to a square/circle
+    const qreal side = qMax(qAbs(delta.x()), qAbs(delta.y()));
+    return start
+            + QPointF(delta.x() < 0.0 ? -side : side, delta.y() < 0.0 ? -side : side);
+}
+
+} // namespace
 
 QVGraphicsView::QVGraphicsView(QWidget *parent) : QGraphicsView(parent)
 {
@@ -192,7 +237,7 @@ void QVGraphicsView::mousePressEvent(QMouseEvent *event)
     if (editMode == EditMode::Crop && event->button() == Qt::LeftButton) {
         const QPointF scenePos = mapToScene(event->pos());
         cropDragHandle = cropHandleAt(scenePos);
-        if (cropDragHandle != HandleNone) {
+        if (cropDragHandle != CropHandle::None) {
             cropDragging = true;
             cropDragStartScene = scenePos;
             cropRectAtDragStart = cropRect;
@@ -302,7 +347,7 @@ void QVGraphicsView::mouseReleaseEvent(QMouseEvent *event)
         if (cropDragging)
             dragCropTo(mapToScene(event->pos()), event->modifiers().testFlag(Qt::ShiftModifier));
         cropDragging = false;
-        cropDragHandle = HandleNone;
+        cropDragHandle = CropHandle::None;
         updateCropCursor(cropHandleAt(mapToScene(event->pos())));
         event->accept();
         return;
@@ -985,22 +1030,8 @@ void QVGraphicsView::rotateImage(int rotation)
     imageCore.rotateImage(rotation);
 }
 
-bool QVGraphicsView::beginEdit(const EditMode &mode)
+void QVGraphicsView::clearEditBuffers()
 {
-    if (mode == EditMode::None) {
-        cancelEdit();
-        return false;
-    }
-
-    if (!getCurrentFileDetails().isPixmapLoaded || getCurrentFileDetails().isMovieLoaded)
-        return false;
-
-    if (isEditing())
-        cancelEdit();
-
-    makeUnscaled();
-    isOriginalSize = false;
-
     adjustPreviewTimer->stop();
     editBasePixmap = QPixmap();
     editBaseImage = QImage();
@@ -1010,12 +1041,45 @@ bool QVGraphicsView::beginEdit(const EditMode &mode)
     pendingSaturation = 0;
     pendingWarmth = 0;
     adjustComparingOriginal = false;
+}
+
+bool QVGraphicsView::hasPendingAdjustments() const
+{
+    return pendingBrightness != 0 || pendingContrast != 0 || pendingSaturation != 0
+            || pendingWarmth != 0;
+}
+
+void QVGraphicsView::showPixmap(const QPixmap &pixmap)
+{
+    loadedPixmapItem->setScale(1.0);
+    loadedPixmapItem->setPixmap(pixmap);
+    scaledSize = loadedPixmapItem->boundingRect().size().toSize();
+}
+
+bool QVGraphicsView::beginEdit(const EditMode &mode)
+{
+    if (mode == EditMode::None) {
+        cancelEdit();
+        return false;
+    }
+
+    const QVImageCore::FileDetails &fileDetails = getCurrentFileDetails();
+    if (!fileDetails.isPixmapLoaded || fileDetails.isMovieLoaded)
+        return false;
+
+    if (isEditing())
+        cancelEdit();
+
+    makeUnscaled();
+    isOriginalSize = false;
+
+    clearEditBuffers();
 
     cropDimItem->hide();
     cropSelectionItem->hide();
     cropAspectRatio = QSizeF();
     cropDragging = false;
-    cropDragHandle = HandleNone;
+    cropDragHandle = CropHandle::None;
     hasCropSelection = false;
     clearDrawings();
 
@@ -1025,7 +1089,7 @@ bool QVGraphicsView::beginEdit(const EditMode &mode)
     editMode = mode;
 
     switch (editMode) {
-    case EditMode::Crop: {
+    case EditMode::Crop:
         setDragMode(QGraphicsView::NoDrag);
         viewport()->setMouseTracking(true);
         viewport()->setCursor(Qt::ArrowCursor);
@@ -1035,34 +1099,76 @@ bool QVGraphicsView::beginEdit(const EditMode &mode)
         hasCropSelection = true;
         updateCropOverlay();
         break;
-    }
-    case EditMode::Draw: {
-        setDragMode(QGraphicsView::NoDrag);
-        viewport()->setCursor(Qt::CrossCursor);
-        break;
-    }
-    case EditMode::Adjust: {
+    case EditMode::Adjust:
         editBasePixmap = imageCore.getLoadedPixmap();
         editBaseImage = editBasePixmap.toImage();
-        constexpr int MAX_PREVIEW_DIM = 1920;
-        if (editBaseImage.width() > MAX_PREVIEW_DIM || editBaseImage.height() > MAX_PREVIEW_DIM) {
-            editPreviewImage = editBaseImage.scaled(MAX_PREVIEW_DIM, MAX_PREVIEW_DIM,
+        if (editBaseImage.width() > maxPreviewDimension
+            || editBaseImage.height() > maxPreviewDimension) {
+            editPreviewImage = editBaseImage.scaled(maxPreviewDimension, maxPreviewDimension,
                                                     Qt::KeepAspectRatio, Qt::SmoothTransformation);
         } else {
             editPreviewImage = editBaseImage;
         }
-        loadedPixmapItem->setPixmap(editBasePixmap);
-        loadedPixmapItem->setScale(1.0);
-        scaledSize = loadedPixmapItem->boundingRect().size().toSize();
+        showPixmap(editBasePixmap);
         setDragMode(QGraphicsView::ScrollHandDrag);
         viewport()->setCursor(Qt::ArrowCursor);
         break;
-    }
-    default:
+    case EditMode::Draw:
+        setDragMode(QGraphicsView::NoDrag);
+        viewport()->setCursor(Qt::CrossCursor);
+        break;
+    case EditMode::None:
         break;
     }
 
     emit editModeChanged(editMode);
+    return true;
+}
+
+bool QVGraphicsView::commitCropEdit()
+{
+    const QRect pixelRect = cropPixelRect();
+    if (pixelRect.width() < 1 || pixelRect.height() < 1)
+        return false;
+
+    // Borders still on the image edges: nothing to crop
+    if (pixelRect == QRect(QPoint(0, 0), getLoadedPixmap().size()))
+        return false;
+
+    cropDimItem->hide();
+    cropSelectionItem->hide();
+    imageCore.cropImage(pixelRect);
+    return true;
+}
+
+bool QVGraphicsView::commitAdjustEdit()
+{
+    adjustPreviewTimer->stop();
+
+    // Nothing changed: stay in edit mode instead of prompting to save
+    if (!hasPendingAdjustments())
+        return false;
+
+    // Compute the full-resolution result on commit
+    const QPixmap finalPixmap = QPixmap::fromImage(QVImageCore::applyBrightnessContrast(
+            editBaseImage, pendingBrightness, pendingContrast, pendingSaturation, pendingWarmth));
+    imageCore.setPreviewPixmap(finalPixmap);
+    showPixmap(finalPixmap);
+    return true;
+}
+
+bool QVGraphicsView::commitDrawEdit()
+{
+    // Nothing drawn: stay in edit mode instead of prompting to save
+    if (drawingItems.isEmpty())
+        return false;
+
+    const QPixmap flattened = flattenDrawings();
+    if (flattened.isNull())
+        return false;
+
+    imageCore.setPreviewPixmap(flattened);
+    showPixmap(flattened);
     return true;
 }
 
@@ -1072,58 +1178,29 @@ bool QVGraphicsView::applyEdit()
         return false;
 
     bool committed = false;
-
-    if (editMode == EditMode::Crop) {
-        const QRect pixelRect = cropPixelRect();
-        if (pixelRect.width() < 1 || pixelRect.height() < 1)
-            return false;
-
-        // Borders still on the image edges: nothing to crop
-        if (pixelRect == QRect(QPoint(0, 0), getLoadedPixmap().size()))
-            return false;
-
-        cropDimItem->hide();
-        cropSelectionItem->hide();
-        imageCore.cropImage(pixelRect);
-        committed = true;
-    } else if (editMode == EditMode::Adjust) {
-        adjustPreviewTimer->stop();
-
-        // Nothing changed: stay in edit mode instead of prompting to save
-        if (pendingBrightness == 0 && pendingContrast == 0 && pendingSaturation == 0
-            && pendingWarmth == 0)
-            return false;
-
-        // Compute the full-resolution result on commit
-        const QPixmap finalPixmap = QPixmap::fromImage(QVImageCore::applyBrightnessContrast(
-                editBaseImage, pendingBrightness, pendingContrast, pendingSaturation,
-                pendingWarmth));
-        loadedPixmapItem->setScale(1.0);
-        imageCore.setPreviewPixmap(finalPixmap);
-        loadedPixmapItem->setPixmap(finalPixmap);
-        scaledSize = loadedPixmapItem->boundingRect().size().toSize();
-        committed = true;
-    } else if (editMode == EditMode::Draw) {
-        // Nothing drawn: stay in edit mode instead of prompting to save
-        if (drawingItems.isEmpty())
-            return false;
-
-        const QPixmap flattened = flattenDrawings();
-        if (flattened.isNull())
-            return false;
-
-        imageCore.setPreviewPixmap(flattened);
-        loadedPixmapItem->setPixmap(flattened);
-        scaledSize = loadedPixmapItem->boundingRect().size().toSize();
-        committed = true;
+    switch (editMode) {
+    case EditMode::Crop:
+        committed = commitCropEdit();
+        break;
+    case EditMode::Adjust:
+        committed = commitAdjustEdit();
+        break;
+    case EditMode::Draw:
+        committed = commitDrawEdit();
+        break;
+    case EditMode::None:
+        break;
     }
+
+    if (!committed)
+        return false;
 
     resetEditState();
 
-    if (committed && qvGetSettingBool(ScalingEnabled) && !isOriginalSize)
+    if (qvGetSettingBool(ScalingEnabled) && !isOriginalSize)
         expensiveScaleTimerNew->start();
 
-    return committed;
+    return true;
 }
 
 void QVGraphicsView::cancelEdit()
@@ -1132,10 +1209,8 @@ void QVGraphicsView::cancelEdit()
         return;
 
     if (editMode == EditMode::Adjust && !editBasePixmap.isNull()) {
-        loadedPixmapItem->setScale(1.0);
         imageCore.setPreviewPixmap(editBasePixmap);
-        loadedPixmapItem->setPixmap(editBasePixmap);
-        scaledSize = loadedPixmapItem->boundingRect().size().toSize();
+        showPixmap(editBasePixmap);
     }
 
     resetEditState();
@@ -1150,10 +1225,11 @@ void QVGraphicsView::setBrightnessContrastPreview(int brightness, int contrast, 
     if (editMode != EditMode::Adjust)
         return;
 
-    pendingBrightness = qBound(-100, brightness, 100);
-    pendingContrast = qBound(-100, contrast, 100);
-    pendingSaturation = qBound(-100, saturation, 100);
-    pendingWarmth = qBound(-100, warmth, 100);
+    pendingBrightness = qBound(-maxAdjustment, brightness, maxAdjustment);
+    pendingContrast = qBound(-maxAdjustment, contrast, maxAdjustment);
+    pendingSaturation = qBound(-maxAdjustment, saturation, maxAdjustment);
+    pendingWarmth = qBound(-maxAdjustment, warmth, maxAdjustment);
+
     if (!adjustComparingOriginal && !adjustPreviewTimer->isActive())
         adjustPreviewTimer->start();
 }
@@ -1166,8 +1242,7 @@ void QVGraphicsView::setAdjustCompareOriginal(bool showOriginal)
     adjustComparingOriginal = showOriginal;
     if (showOriginal) {
         adjustPreviewTimer->stop();
-        loadedPixmapItem->setScale(1.0);
-        loadedPixmapItem->setPixmap(editBasePixmap);
+        showPixmap(editBasePixmap);
     } else {
         applyBrightnessContrastPreview();
     }
@@ -1200,7 +1275,7 @@ void QVGraphicsView::beginDrawing(const QPointF &scenePos)
     case DrawSettings::Tool::Pen: {
         activePenPath = QPainterPath(scenePos);
         // Tiny segment so a single click leaves a dot (round caps)
-        activePenPath.lineTo(scenePos + QPointF(0.01, 0));
+        activePenPath.lineTo(scenePos + QPointF(clickDotSegment, 0.0));
         auto *pathItem = new QGraphicsPathItem(activePenPath);
         pathItem->setPen(pen);
         pathItem->setBrush(Qt::NoBrush);
@@ -1229,7 +1304,7 @@ void QVGraphicsView::beginDrawing(const QPointF &scenePos)
     }
     }
 
-    item->setZValue(5);
+    item->setZValue(drawingZValue);
     item->setAcceptedMouseButtons(Qt::NoButton);
     scene()->addItem(item);
     activeDrawingItem = item;
@@ -1240,46 +1315,28 @@ void QVGraphicsView::updateDrawing(const QPointF &scenePos, bool constrain)
     if (!isDrawing || !activeDrawingItem)
         return;
 
-    QPointF targetPos = scenePos;
-    if (constrain && drawSettings.tool != DrawSettings::Tool::Pen) {
-        const QPointF delta = scenePos - drawStartScenePos;
-        if (drawSettings.tool == DrawSettings::Tool::Line) {
-            // Snap line to nearest 45-degree angle
-            const qreal len = qHypot(delta.x(), delta.y());
-            if (len > 0.0) {
-                const qreal angle = qAtan2(delta.y(), delta.x());
-                const qreal snapped = qRound(angle / (M_PI / 4.0)) * (M_PI / 4.0);
-                targetPos = drawStartScenePos + QPointF(len * qCos(snapped), len * qSin(snapped));
-            }
-        } else {
-            // Constrain rectangle/ellipse to square/circle
-            const qreal side = qMax(qAbs(delta.x()), qAbs(delta.y()));
-            targetPos = drawStartScenePos
-                    + QPointF(delta.x() < 0 ? -side : side, delta.y() < 0 ? -side : side);
-        }
-    }
+    const QPointF targetPos =
+            constrain && drawSettings.tool != DrawSettings::Tool::Pen
+            ? constrainedDrawingTarget(drawStartScenePos, scenePos, drawSettings.tool)
+            : scenePos;
 
     switch (drawSettings.tool) {
-    case DrawSettings::Tool::Pen: {
+    case DrawSettings::Tool::Pen:
         activePenPath.lineTo(targetPos);
         static_cast<QGraphicsPathItem *>(activeDrawingItem)->setPath(activePenPath);
         break;
-    }
-    case DrawSettings::Tool::Line: {
+    case DrawSettings::Tool::Line:
         static_cast<QGraphicsLineItem *>(activeDrawingItem)
                 ->setLine(QLineF(drawStartScenePos, targetPos));
         break;
-    }
-    case DrawSettings::Tool::Rectangle: {
+    case DrawSettings::Tool::Rectangle:
         static_cast<QGraphicsRectItem *>(activeDrawingItem)
                 ->setRect(QRectF(drawStartScenePos, targetPos).normalized());
         break;
-    }
-    case DrawSettings::Tool::Ellipse: {
+    case DrawSettings::Tool::Ellipse:
         static_cast<QGraphicsEllipseItem *>(activeDrawingItem)
                 ->setRect(QRectF(drawStartScenePos, targetPos).normalized());
         break;
-    }
     }
 }
 
@@ -1289,7 +1346,9 @@ void QVGraphicsView::finishDrawing(const QPointF &scenePos, bool constrain)
 
     // Discard degenerate shapes (a plain click); pen clicks stay as dots
     const QPointF delta = scenePos - drawStartScenePos;
-    const bool degenerate = qAbs(delta.x()) < 1 && qAbs(delta.y()) < 1;
+    const bool degenerate = qAbs(delta.x()) < degenerateDrawingThreshold
+            && qAbs(delta.y()) < degenerateDrawingThreshold;
+
     if (activeDrawingItem && degenerate && drawSettings.tool != DrawSettings::Tool::Pen) {
         delete activeDrawingItem;
     } else if (activeDrawingItem) {
@@ -1348,16 +1407,12 @@ void QVGraphicsView::resetEditState()
     if (!isEditing())
         return;
 
-    adjustPreviewTimer->stop();
-    editBasePixmap = QPixmap();
-    editBaseImage = QImage();
-    editPreviewImage = QImage();
-    adjustComparingOriginal = false;
+    clearEditBuffers();
     loadedPixmapItem->setScale(1.0);
     clearDrawings();
 
     cropDragging = false;
-    cropDragHandle = HandleNone;
+    cropDragHandle = CropHandle::None;
     hasCropSelection = false;
     cropDimItem->hide();
     cropSelectionItem->hide();
@@ -1375,87 +1430,92 @@ void QVGraphicsView::applyBrightnessContrastPreview()
     if (editMode != EditMode::Adjust || editPreviewImage.isNull())
         return;
 
-    if (pendingBrightness == 0 && pendingContrast == 0 && pendingSaturation == 0
-        && pendingWarmth == 0) {
-        loadedPixmapItem->setScale(1.0);
-        loadedPixmapItem->setPixmap(editBasePixmap);
+    if (!hasPendingAdjustments()) {
+        showPixmap(editBasePixmap);
         return;
     }
 
     const QPixmap preview = QPixmap::fromImage(QVImageCore::applyBrightnessContrast(
             editPreviewImage, pendingBrightness, pendingContrast, pendingSaturation,
             pendingWarmth));
-    const qreal scaleFactor = qreal(editBaseImage.width()) / qMax(1, preview.width());
+    const qreal scaleFactor =
+            static_cast<qreal>(editBaseImage.width()) / qMax(1, preview.width());
     loadedPixmapItem->setPixmap(preview);
     loadedPixmapItem->setScale(scaleFactor);
 }
 
-int QVGraphicsView::cropHandleAt(const QPointF &scenePos) const
+QVGraphicsView::CropHandles QVGraphicsView::cropHandleAt(const QPointF &scenePos) const
 {
     if (!hasCropSelection)
-        return HandleNone;
+        return CropHandle::None;
 
     // Grab tolerance is constant in screen pixels, so convert it to scene units
     const qreal scale = qMax(qAbs(transform().m11()), 0.0001);
-    const qreal tol = 12.0 / scale;
+    const qreal tolerance = cropHandleHitRadius / scale;
 
-    const bool nearLeft = qAbs(scenePos.x() - cropRect.left()) <= tol;
-    const bool nearRight = qAbs(scenePos.x() - cropRect.right()) <= tol;
-    const bool nearTop = qAbs(scenePos.y() - cropRect.top()) <= tol;
-    const bool nearBottom = qAbs(scenePos.y() - cropRect.bottom()) <= tol;
+    const bool nearLeft = qAbs(scenePos.x() - cropRect.left()) <= tolerance;
+    const bool nearRight = qAbs(scenePos.x() - cropRect.right()) <= tolerance;
+    const bool nearTop = qAbs(scenePos.y() - cropRect.top()) <= tolerance;
+    const bool nearBottom = qAbs(scenePos.y() - cropRect.bottom()) <= tolerance;
 
-    const QRectF grabArea = cropRect.adjusted(-tol, -tol, tol, tol);
+    const QRectF grabArea = cropRect.adjusted(-tolerance, -tolerance, tolerance, tolerance);
     if (!grabArea.contains(scenePos))
-        return HandleNone;
+        return CropHandle::None;
 
-    int handle = HandleNone;
+    CropHandles handle = CropHandle::None;
+
     // Prefer the nearer edge when a tiny selection makes both candidates match
-    if (nearLeft && nearRight)
+    if (nearLeft && nearRight) {
         handle |= (scenePos.x() - cropRect.left() < cropRect.right() - scenePos.x())
-                ? HandleLeft
-                : HandleRight;
-    else if (nearLeft)
-        handle |= HandleLeft;
-    else if (nearRight)
-        handle |= HandleRight;
+                ? CropHandle::Left
+                : CropHandle::Right;
+    } else if (nearLeft) {
+        handle |= CropHandle::Left;
+    } else if (nearRight) {
+        handle |= CropHandle::Right;
+    }
 
-    if (nearTop && nearBottom)
+    if (nearTop && nearBottom) {
         handle |= (scenePos.y() - cropRect.top() < cropRect.bottom() - scenePos.y())
-                ? HandleTop
-                : HandleBottom;
-    else if (nearTop)
-        handle |= HandleTop;
-    else if (nearBottom)
-        handle |= HandleBottom;
+                ? CropHandle::Top
+                : CropHandle::Bottom;
+    } else if (nearTop) {
+        handle |= CropHandle::Top;
+    } else if (nearBottom) {
+        handle |= CropHandle::Bottom;
+    }
 
-    if (handle != HandleNone)
+    if (handle != CropHandle::None)
         return handle;
 
-    return cropRect.contains(scenePos) ? HandleMove : HandleNone;
+    return cropRect.contains(scenePos) ? CropHandle::Move : CropHandle::None;
 }
 
-void QVGraphicsView::updateCropCursor(int handle)
+void QVGraphicsView::updateCropCursor(CropHandles handle)
 {
     if (editMode != EditMode::Crop)
         return;
 
     // The view may be mirrored/flipped; swap sides so diagonal cursors match what is shown
-    if (transform().m11() < 0 && (handle & (HandleLeft | HandleRight)))
-        handle ^= (HandleLeft | HandleRight);
-    if (transform().m22() < 0 && (handle & (HandleTop | HandleBottom)))
-        handle ^= (HandleTop | HandleBottom);
+    if (transform().m11() < 0 && (handle & (CropHandle::Left | CropHandle::Right)))
+        handle ^= (CropHandle::Left | CropHandle::Right);
+    if (transform().m22() < 0 && (handle & (CropHandle::Top | CropHandle::Bottom)))
+        handle ^= (CropHandle::Top | CropHandle::Bottom);
 
     Qt::CursorShape shape = Qt::ArrowCursor;
-    if (handle == HandleMove)
+    if (handle == CropHandle::Move) {
         shape = cropDragging ? Qt::ClosedHandCursor : Qt::OpenHandCursor;
-    else if (handle == (HandleLeft | HandleTop) || handle == (HandleRight | HandleBottom))
+    } else if (handle == (CropHandle::Left | CropHandle::Top)
+               || handle == (CropHandle::Right | CropHandle::Bottom)) {
         shape = Qt::SizeFDiagCursor;
-    else if (handle == (HandleRight | HandleTop) || handle == (HandleLeft | HandleBottom))
+    } else if (handle == (CropHandle::Right | CropHandle::Top)
+               || handle == (CropHandle::Left | CropHandle::Bottom)) {
         shape = Qt::SizeBDiagCursor;
-    else if (handle == HandleLeft || handle == HandleRight)
+    } else if (handle == CropHandle::Left || handle == CropHandle::Right) {
         shape = Qt::SizeHorCursor;
-    else if (handle == HandleTop || handle == HandleBottom)
+    } else if (handle == CropHandle::Top || handle == CropHandle::Bottom) {
         shape = Qt::SizeVerCursor;
+    }
 
     viewport()->setCursor(shape);
 }
@@ -1466,8 +1526,8 @@ void QVGraphicsView::setCropAspectRatio(const QSizeF &aspect)
         return;
 
     cropAspectRatio = aspect;
-    const qreal ar = effectiveCropAspectRatio(false);
-    if (ar <= 0.0) {
+    const qreal aspectRatio = effectiveCropAspectRatio(false);
+    if (aspectRatio <= 0.0) {
         updateCropOverlay();
         return;
     }
@@ -1476,25 +1536,30 @@ void QVGraphicsView::setCropAspectRatio(const QSizeF &aspect)
     if (bounds.isEmpty())
         return;
 
-    // Fit the largest box of ratio `ar` inside the current cropRect (or full bounds if tiny),
-    // centered on the current selection
-    QRectF base = cropRect.width() >= 16 && cropRect.height() >= 16 ? cropRect : bounds;
-    qreal w = base.width();
-    qreal h = qRound(w / ar);
-    if (h > base.height()) {
-        h = base.height();
-        w = qRound(h * ar);
+    // Fit the largest box of the requested ratio inside the current selection (or the full
+    // bounds if the selection is tiny), centered on the current selection.
+    const QRectF base =
+            cropRect.width() >= minimumCropAspectBaseSize
+                    && cropRect.height() >= minimumCropAspectBaseSize
+            ? cropRect
+            : bounds;
+
+    qreal width = base.width();
+    qreal height = qRound(width / aspectRatio);
+    if (height > base.height()) {
+        height = base.height();
+        width = qRound(height * aspectRatio);
     }
-    w = qBound(1.0, qreal(qRound(w)), bounds.width());
-    h = qBound(1.0, qreal(qRound(h)), bounds.height());
+    width = qBound(1.0, static_cast<qreal>(qRound(width)), bounds.width());
+    height = qBound(1.0, static_cast<qreal>(qRound(height)), bounds.height());
 
-    const QPointF c = cropRect.center();
-    qreal left = qRound(c.x() - w / 2.0);
-    qreal top = qRound(c.y() - h / 2.0);
-    left = qBound(bounds.left(), left, bounds.right() - w);
-    top = qBound(bounds.top(), top, bounds.bottom() - h);
+    const QPointF center = cropRect.center();
+    qreal left = qRound(center.x() - width / 2.0);
+    qreal top = qRound(center.y() - height / 2.0);
+    left = qBound(bounds.left(), left, bounds.right() - width);
+    top = qBound(bounds.top(), top, bounds.bottom() - height);
 
-    cropRect = QRectF(left, top, w, h);
+    cropRect = QRectF(left, top, width, height);
     updateCropOverlay();
 }
 
@@ -1512,127 +1577,153 @@ void QVGraphicsView::resetCropRect()
 qreal QVGraphicsView::effectiveCropAspectRatio(bool constrain) const
 {
     if (cropAspectRatio.width() < 0.0 && cropAspectRatio.height() < 0.0) {
-        const QSize imgSize = getLoadedPixmap().size();
-        if (imgSize.width() > 0 && imgSize.height() > 0)
-            return qreal(imgSize.width()) / qreal(imgSize.height());
+        const QSize imageSize = getLoadedPixmap().size();
+        if (imageSize.width() > 0 && imageSize.height() > 0) {
+            return static_cast<qreal>(imageSize.width())
+                    / static_cast<qreal>(imageSize.height());
+        }
         return 0.0;
     }
+
     if (cropAspectRatio.width() > 0.0 && cropAspectRatio.height() > 0.0)
         return cropAspectRatio.width() / cropAspectRatio.height();
+
     if (constrain)
-        return 1.0; // Shift in Free mode constrains to 1:1 square
+        return 1.0; // Shift in Free mode constrains to a 1:1 square
+
     return 0.0;
 }
 
 void QVGraphicsView::dragCropTo(const QPointF &scenePos, bool constrain)
 {
-    if (!cropDragging || cropDragHandle == HandleNone)
+    if (!cropDragging || cropDragHandle == CropHandle::None)
         return;
 
     const QRectF bounds = loadedPixmapItem->boundingRect();
     // Whole image pixels only, so the overlay always matches the cropped result
     const qreal dx = qRound(scenePos.x() - cropDragStartScene.x());
     const qreal dy = qRound(scenePos.y() - cropDragStartScene.y());
-    constexpr qreal MIN_SIZE = 1;
+    const qreal aspectRatio = effectiveCropAspectRatio(constrain);
+
+    const bool horizontalHandle =
+            cropDragHandle.testFlag(CropHandle::Left) || cropDragHandle.testFlag(CropHandle::Right);
+    const bool verticalHandle = cropDragHandle.testFlag(CropHandle::Top)
+            || cropDragHandle.testFlag(CropHandle::Bottom);
 
     QRectF rect = cropRectAtDragStart;
-    const qreal ar = effectiveCropAspectRatio(constrain);
-
-    if (cropDragHandle == HandleMove) {
-        rect.translate(dx, dy);
-        rect.moveLeft(qBound(bounds.left(), rect.left(), bounds.right() - rect.width()));
-        rect.moveTop(qBound(bounds.top(), rect.top(), bounds.bottom() - rect.height()));
-    } else if (ar <= 0.0) {
-        if (cropDragHandle & HandleLeft)
-            rect.setLeft(qBound(bounds.left(), rect.left() + dx, rect.right() - MIN_SIZE));
-        if (cropDragHandle & HandleRight)
-            rect.setRight(qBound(rect.left() + MIN_SIZE, rect.right() + dx, bounds.right()));
-        if (cropDragHandle & HandleTop)
-            rect.setTop(qBound(bounds.top(), rect.top() + dy, rect.bottom() - MIN_SIZE));
-        if (cropDragHandle & HandleBottom)
-            rect.setBottom(qBound(rect.top() + MIN_SIZE, rect.bottom() + dy, bounds.bottom()));
-    } else {
-        const bool hasHoriz = (cropDragHandle & (HandleLeft | HandleRight)) != 0;
-        const bool hasVert = (cropDragHandle & (HandleTop | HandleBottom)) != 0;
-
-        if (hasHoriz && hasVert) {
-            // Corner drag: anchor the opposite corner
-            const qreal anchorX =
-                    (cropDragHandle & HandleLeft) ? rect.right() : rect.left();
-            const qreal anchorY =
-                    (cropDragHandle & HandleTop) ? rect.bottom() : rect.top();
-            const qreal maxW =
-                    (cropDragHandle & HandleLeft) ? (anchorX - bounds.left())
-                                                  : (bounds.right() - anchorX);
-            const qreal maxH =
-                    (cropDragHandle & HandleTop) ? (anchorY - bounds.top())
-                                                 : (bounds.bottom() - anchorY);
-
-            qreal rawW = (cropDragHandle & HandleLeft) ? (rect.width() - dx)
-                                                       : (rect.width() + dx);
-            qreal rawH = (cropDragHandle & HandleTop) ? (rect.height() - dy)
-                                                      : (rect.height() + dy);
-            qreal w = qMax(MIN_SIZE, qMax(rawW, rawH * ar));
-            qreal h = w / ar;
-            if (w > maxW) {
-                w = maxW;
-                h = w / ar;
-            }
-            if (h > maxH) {
-                h = maxH;
-                w = h * ar;
-            }
-            w = qMax(MIN_SIZE, qreal(qRound(w)));
-            h = qMax(MIN_SIZE, qreal(qRound(h)));
-
-            const qreal left = (cropDragHandle & HandleLeft) ? (anchorX - w) : anchorX;
-            const qreal top = (cropDragHandle & HandleTop) ? (anchorY - h) : anchorY;
-            rect = QRectF(left, top, w, h);
-        } else if (hasHoriz) {
-            // Horizontal edge drag: scale height symmetrically around vertical center
-            const qreal anchorX =
-                    (cropDragHandle & HandleLeft) ? rect.right() : rect.left();
-            const qreal centerY = rect.center().y();
-            const qreal maxWByX =
-                    (cropDragHandle & HandleLeft) ? (anchorX - bounds.left())
-                                                  : (bounds.right() - anchorX);
-            const qreal maxHByY =
-                    2.0 * qMin(centerY - bounds.top(), bounds.bottom() - centerY);
-            const qreal maxW = qMin(maxWByX, maxHByY * ar);
-
-            qreal rawW = (cropDragHandle & HandleLeft) ? (rect.width() - dx)
-                                                       : (rect.width() + dx);
-            qreal w = qBound(MIN_SIZE, qreal(qRound(rawW)), qMax(MIN_SIZE, qreal(qRound(maxW))));
-            qreal h = qMax(MIN_SIZE, qreal(qRound(w / ar)));
-            qreal top = qRound(centerY - h / 2.0);
-            top = qBound(bounds.top(), top, bounds.bottom() - h);
-            const qreal left = (cropDragHandle & HandleLeft) ? (anchorX - w) : anchorX;
-            rect = QRectF(left, top, w, h);
-        } else if (hasVert) {
-            // Vertical edge drag: scale width symmetrically around horizontal center
-            const qreal anchorY =
-                    (cropDragHandle & HandleTop) ? rect.bottom() : rect.top();
-            const qreal centerX = rect.center().x();
-            const qreal maxHByY =
-                    (cropDragHandle & HandleTop) ? (anchorY - bounds.top())
-                                                 : (bounds.bottom() - anchorY);
-            const qreal maxWByX =
-                    2.0 * qMin(centerX - bounds.left(), bounds.right() - centerX);
-            const qreal maxH = qMin(maxHByY, maxWByX / ar);
-
-            qreal rawH = (cropDragHandle & HandleTop) ? (rect.height() - dy)
-                                                      : (rect.height() + dy);
-            qreal h = qBound(MIN_SIZE, qreal(qRound(rawH)), qMax(MIN_SIZE, qreal(qRound(maxH))));
-            qreal w = qMax(MIN_SIZE, qreal(qRound(h * ar)));
-            qreal left = qRound(centerX - w / 2.0);
-            left = qBound(bounds.left(), left, bounds.right() - w);
-            const qreal top = (cropDragHandle & HandleTop) ? (anchorY - h) : anchorY;
-            rect = QRectF(left, top, w, h);
-        }
+    if (cropDragHandle == CropHandle::Move) {
+        rect = dragCropMove(rect, bounds, dx, dy);
+    } else if (aspectRatio <= 0.0) {
+        rect = dragCropFree(rect, bounds, dx, dy);
+    } else if (horizontalHandle && verticalHandle) {
+        rect = dragCropCorner(rect, bounds, dx, dy, aspectRatio);
+    } else if (horizontalHandle) {
+        rect = dragCropHorizontalEdge(rect, bounds, dx, aspectRatio);
+    } else if (verticalHandle) {
+        rect = dragCropVerticalEdge(rect, bounds, dy, aspectRatio);
     }
 
     cropRect = rect;
     updateCropOverlay();
+}
+
+QRectF QVGraphicsView::dragCropMove(QRectF rect, const QRectF &bounds, qreal dx, qreal dy) const
+{
+    rect.translate(dx, dy);
+    rect.moveLeft(qBound(bounds.left(), rect.left(), bounds.right() - rect.width()));
+    rect.moveTop(qBound(bounds.top(), rect.top(), bounds.bottom() - rect.height()));
+    return rect;
+}
+
+QRectF QVGraphicsView::dragCropFree(QRectF rect, const QRectF &bounds, qreal dx, qreal dy) const
+{
+    if (cropDragHandle.testFlag(CropHandle::Left))
+        rect.setLeft(qBound(bounds.left(), rect.left() + dx, rect.right() - minimumCropSize));
+    if (cropDragHandle.testFlag(CropHandle::Right))
+        rect.setRight(qBound(rect.left() + minimumCropSize, rect.right() + dx, bounds.right()));
+    if (cropDragHandle.testFlag(CropHandle::Top))
+        rect.setTop(qBound(bounds.top(), rect.top() + dy, rect.bottom() - minimumCropSize));
+    if (cropDragHandle.testFlag(CropHandle::Bottom))
+        rect.setBottom(
+                qBound(rect.top() + minimumCropSize, rect.bottom() + dy, bounds.bottom()));
+    return rect;
+}
+
+QRectF QVGraphicsView::dragCropCorner(QRectF rect, const QRectF &bounds, qreal dx, qreal dy,
+                                      qreal aspectRatio) const
+{
+    const bool dragLeft = cropDragHandle.testFlag(CropHandle::Left);
+    const bool dragTop = cropDragHandle.testFlag(CropHandle::Top);
+
+    // Anchor the opposite corner
+    const qreal anchorX = dragLeft ? rect.right() : rect.left();
+    const qreal anchorY = dragTop ? rect.bottom() : rect.top();
+    const qreal maxWidth = dragLeft ? (anchorX - bounds.left()) : (bounds.right() - anchorX);
+    const qreal maxHeight = dragTop ? (anchorY - bounds.top()) : (bounds.bottom() - anchorY);
+
+    const qreal rawWidth = dragLeft ? (rect.width() - dx) : (rect.width() + dx);
+    const qreal rawHeight = dragTop ? (rect.height() - dy) : (rect.height() + dy);
+
+    qreal width = qMax(minimumCropSize, qMax(rawWidth, rawHeight * aspectRatio));
+    qreal height = width / aspectRatio;
+    if (width > maxWidth) {
+        width = maxWidth;
+        height = width / aspectRatio;
+    }
+    if (height > maxHeight) {
+        height = maxHeight;
+        width = height * aspectRatio;
+    }
+    width = qMax(minimumCropSize, static_cast<qreal>(qRound(width)));
+    height = qMax(minimumCropSize, static_cast<qreal>(qRound(height)));
+
+    const qreal left = dragLeft ? (anchorX - width) : anchorX;
+    const qreal top = dragTop ? (anchorY - height) : anchorY;
+    return QRectF(left, top, width, height);
+}
+
+QRectF QVGraphicsView::dragCropHorizontalEdge(QRectF rect, const QRectF &bounds, qreal dx,
+                                              qreal aspectRatio) const
+{
+    const bool dragLeft = cropDragHandle.testFlag(CropHandle::Left);
+
+    // Scale height symmetrically around the vertical center
+    const qreal anchorX = dragLeft ? rect.right() : rect.left();
+    const qreal centerY = rect.center().y();
+    const qreal maxWidthByX = dragLeft ? (anchorX - bounds.left()) : (bounds.right() - anchorX);
+    const qreal maxHeightByY = 2.0 * qMin(centerY - bounds.top(), bounds.bottom() - centerY);
+    const qreal maxWidth = qMin(maxWidthByX, maxHeightByY * aspectRatio);
+
+    const qreal rawWidth = dragLeft ? (rect.width() - dx) : (rect.width() + dx);
+    const qreal width = qBound(minimumCropSize, static_cast<qreal>(qRound(rawWidth)),
+                               qMax(minimumCropSize, static_cast<qreal>(qRound(maxWidth))));
+    const qreal height = qMax(minimumCropSize, static_cast<qreal>(qRound(width / aspectRatio)));
+    qreal top = qRound(centerY - height / 2.0);
+    top = qBound(bounds.top(), top, bounds.bottom() - height);
+    const qreal left = dragLeft ? (anchorX - width) : anchorX;
+    return QRectF(left, top, width, height);
+}
+
+QRectF QVGraphicsView::dragCropVerticalEdge(QRectF rect, const QRectF &bounds, qreal dy,
+                                            qreal aspectRatio) const
+{
+    const bool dragTop = cropDragHandle.testFlag(CropHandle::Top);
+
+    // Scale width symmetrically around the horizontal center
+    const qreal anchorY = dragTop ? rect.bottom() : rect.top();
+    const qreal centerX = rect.center().x();
+    const qreal maxHeightByY = dragTop ? (anchorY - bounds.top()) : (bounds.bottom() - anchorY);
+    const qreal maxWidthByX = 2.0 * qMin(centerX - bounds.left(), bounds.right() - centerX);
+    const qreal maxHeight = qMin(maxHeightByY, maxWidthByX / aspectRatio);
+
+    const qreal rawHeight = dragTop ? (rect.height() - dy) : (rect.height() + dy);
+    const qreal height = qBound(minimumCropSize, static_cast<qreal>(qRound(rawHeight)),
+                                qMax(minimumCropSize, static_cast<qreal>(qRound(maxHeight))));
+    const qreal width = qMax(minimumCropSize, static_cast<qreal>(qRound(height * aspectRatio)));
+    qreal left = qRound(centerX - width / 2.0);
+    left = qBound(bounds.left(), left, bounds.right() - width);
+    const qreal top = dragTop ? (anchorY - height) : anchorY;
+    return QRectF(left, top, width, height);
 }
 
 void QVGraphicsView::updateCropOverlay()
@@ -1642,11 +1733,12 @@ void QVGraphicsView::updateCropOverlay()
 
     // Rule-of-thirds composition lines
     QPainterPath gridPath;
-    if (cropRect.width() >= 24 && cropRect.height() >= 24) {
+    if (cropRect.width() >= cropGridMinimumSize && cropRect.height() >= cropGridMinimumSize) {
         const qreal x1 = cropRect.left() + cropRect.width() / 3.0;
         const qreal x2 = cropRect.left() + (cropRect.width() * 2.0) / 3.0;
         const qreal y1 = cropRect.top() + cropRect.height() / 3.0;
         const qreal y2 = cropRect.top() + (cropRect.height() * 2.0) / 3.0;
+
         gridPath.moveTo(x1, cropRect.top());
         gridPath.lineTo(x1, cropRect.bottom());
         gridPath.moveTo(x2, cropRect.top());
@@ -1664,18 +1756,19 @@ void QVGraphicsView::updateCropOverlay()
 
     // Corners and edge midpoints
     const QPointF center = cropRect.center();
-    const QPointF points[8] = {
-        cropRect.topLeft(),
-        QPointF(center.x(), cropRect.top()),
-        cropRect.topRight(),
-        QPointF(cropRect.right(), center.y()),
-        cropRect.bottomRight(),
-        QPointF(center.x(), cropRect.bottom()),
-        cropRect.bottomLeft(),
-        QPointF(cropRect.left(), center.y()),
+    const std::array<QPointF, 8> points = {
+        { cropRect.topLeft(),
+          QPointF(center.x(), cropRect.top()),
+          cropRect.topRight(),
+          QPointF(cropRect.right(), center.y()),
+          cropRect.bottomRight(),
+          QPointF(center.x(), cropRect.bottom()),
+          cropRect.bottomLeft(),
+          QPointF(cropRect.left(), center.y()) }
     };
-    for (int i = 0; i < 8; i++)
-        cropHandleItems[i]->setPos(cropSelectionItem->mapFromScene(points[i]));
+
+    for (std::size_t i = 0; i < points.size(); ++i)
+        cropHandleItems.at(i)->setPos(cropSelectionItem->mapFromScene(points.at(i)));
 
     emit cropRectChanged(cropPixelRect(), getLoadedPixmap().size());
 }

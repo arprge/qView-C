@@ -35,6 +35,39 @@
 #include <QNetworkReply>
 #include <QTemporaryFile>
 
+namespace {
+
+constexpr int contextMenuEdgeMargin = 4;
+
+QStringList writableImageFilters(QStringList &suffixes)
+{
+    QStringList filters;
+    const QList<QByteArray> supportedFormats = QImageWriter::supportedImageFormats();
+
+    for (const QByteArray &format : supportedFormats) {
+        const QString suffix = QString::fromLatin1(format).toLower();
+        if (suffixes.contains(suffix))
+            continue;
+
+        suffixes << suffix;
+        filters << QStringLiteral("%1 (*.%2)").arg(suffix.toUpper(), suffix);
+    }
+
+    return filters;
+}
+
+QString preferredSaveSuffix(const QFileInfo &sourceFile, const QStringList &writableSuffixes)
+{
+    QString suffix = sourceFile.suffix().toLower();
+    if (suffix == QStringLiteral("jpe"))
+        suffix = QStringLiteral("jpeg");
+    if (!writableSuffixes.contains(suffix))
+        suffix = QStringLiteral("png");
+    return suffix;
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
@@ -217,34 +250,45 @@ void MainWindow::contextMenuEvent(QContextMenuEvent *event)
     qvApp->getActionManager().loadRecentsList();
     QVCocoaFunctions::showMenu(contextMenu, event->pos(), windowHandle());
 #else
+    contextMenu->popup(
+            adjustedContextMenuPosition(contextMenu, event->globalPos(), event->pos()));
+#endif
+}
+
+QPoint MainWindow::adjustedContextMenuPosition(QMenu *menu, const QPoint &globalPos,
+                                               const QPoint &localPos) const
+{
     // On Wayland, top-level windows don't know their screen position, so Qt can't tell which side
     // of the screen has room for nested submenus. Keep the context menu inside the window bounds
     // (or flip it to the left of the cursor when clicked on the right half of the window) so both
     // the menu and its submenus have room inside the window.
-    QPoint popupPos = event->globalPos();
-    const QSize menuSize = contextMenu->sizeHint();
+    const QSize menuSize = menu->sizeHint();
     int maxSubmenuWidth = 0;
-    const auto menuActions = contextMenu->actions();
-    for (QAction *action : menuActions) {
-        if (QMenu *sub = action->menu())
-            maxSubmenuWidth = qMax(maxSubmenuWidth, sub->sizeHint().width());
+    const QList<QAction *> menuActions = menu->actions();
+    for (const QAction *action : menuActions) {
+        if (const QMenu *submenu = action->menu())
+            maxSubmenuWidth = qMax(maxSubmenuWidth, submenu->sizeHint().width());
     }
 
-    const QRect winRect = rect();
-    const QPoint localPos = event->pos();
+    QPoint position = globalPos;
+    const QRect windowRect = rect();
+
     // If clicking near the right edge where the menu + submenu would overflow the window,
     // open the context menu to the left of the cursor if there's more room on the left.
-    if (localPos.x() + menuSize.width() + maxSubmenuWidth > winRect.width()
-        && localPos.x() > winRect.width() / 2) {
-        const int shiftedX = qMax(4, localPos.x() - menuSize.width());
-        popupPos.setX(mapToGlobal(QPoint(shiftedX, localPos.y())).x());
+    if (localPos.x() + menuSize.width() + maxSubmenuWidth > windowRect.width()
+        && localPos.x() > windowRect.width() / 2) {
+        const int shiftedX = qMax(contextMenuEdgeMargin, localPos.x() - menuSize.width());
+        position.setX(mapToGlobal(QPoint(shiftedX, localPos.y())).x());
     }
-    if (localPos.y() + menuSize.height() > winRect.height() && localPos.y() > menuSize.height()) {
-        const int shiftedY = qMax(4, winRect.height() - menuSize.height() - 4);
-        popupPos.setY(mapToGlobal(QPoint(localPos.x(), shiftedY)).y());
+
+    if (localPos.y() + menuSize.height() > windowRect.height()
+        && localPos.y() > menuSize.height()) {
+        const int shiftedY = qMax(contextMenuEdgeMargin,
+                                  windowRect.height() - menuSize.height() - contextMenuEdgeMargin);
+        position.setY(mapToGlobal(QPoint(localPos.x(), shiftedY)).y());
     }
-    contextMenu->popup(popupPos);
-#endif
+
+    return position;
 }
 
 void MainWindow::showEvent(QShowEvent *event)
@@ -1112,10 +1156,14 @@ void MainWindow::onEditModeChanged(QVGraphicsView::EditMode mode)
     editPanel->setMode(mode);
     editPanel->show();
 
-    const QStringList disabledWhileEditing = { "rotateleft", "rotateright", "mirror", "flip" };
-    for (const auto &key : disabledWhileEditing) {
-        const auto actions = qvApp->getActionManager().getAllInstancesOfAction(key);
-        for (auto *action : actions)
+    const QStringList actionsDisabledWhileEditing = {
+        QStringLiteral("rotateleft"), QStringLiteral("rotateright"), QStringLiteral("mirror"),
+        QStringLiteral("flip")
+    };
+    for (const QString &actionKey : actionsDisabledWhileEditing) {
+        const QList<QAction *> actions =
+                qvApp->getActionManager().getAllInstancesOfAction(actionKey);
+        for (QAction *action : actions)
             action->setEnabled(false);
     }
 
@@ -1138,34 +1186,23 @@ void MainWindow::saveEditedCopy()
     const QFileInfo currentFile = getCurrentFileDetails().fileInfo;
 
     QStringList writableSuffixes;
-    QStringList filters;
-    const auto supportedFormats = QImageWriter::supportedImageFormats();
-    for (const auto &format : supportedFormats) {
-        const QString suffix = QString::fromLatin1(format).toLower();
-        if (writableSuffixes.contains(suffix))
-            continue;
-
-        writableSuffixes << suffix;
-        filters << QStringLiteral("%1 (*.%2)").arg(suffix.toUpper(), suffix);
-    }
+    QStringList filters = writableImageFilters(writableSuffixes);
     filters << tr("All Files (*)");
 
-    QString defaultSuffix = currentFile.suffix().toLower();
-    if (defaultSuffix == "jpe")
-        defaultSuffix = "jpeg";
-    if (!writableSuffixes.contains(defaultSuffix))
-        defaultSuffix = "png";
+    const QString defaultSuffix = preferredSaveSuffix(currentFile, writableSuffixes);
 
     QSettings settings;
-    settings.beginGroup("recents");
+    settings.beginGroup(QStringLiteral("recents"));
     const QString lastFileDialogDir =
-            settings.value("lastFileDialogDir", currentFile.absolutePath()).toString();
+            settings.value(QStringLiteral("lastFileDialogDir"), currentFile.absolutePath())
+                    .toString();
 
     auto *saveDialog = new QFileDialog(this, tr("Save Edited Copy As..."));
     saveDialog->setAttribute(Qt::WA_DeleteOnClose);
     saveDialog->setDirectory(lastFileDialogDir);
     saveDialog->setNameFilters(filters);
-    saveDialog->selectFile(currentFile.completeBaseName() + "-edited." + defaultSuffix);
+    saveDialog->selectFile(currentFile.completeBaseName() + QStringLiteral("-edited.")
+                           + defaultSuffix);
     saveDialog->setDefaultSuffix(defaultSuffix);
     saveDialog->setAcceptMode(QFileDialog::AcceptSave);
     saveDialog->setFileMode(QFileDialog::AnyFile);
@@ -1180,8 +1217,9 @@ void MainWindow::saveEditedCopy()
         }
 
         QSettings settings;
-        settings.beginGroup("recents");
-        settings.setValue("lastFileDialogDir", QFileInfo(fileName).absolutePath());
+        settings.beginGroup(QStringLiteral("recents"));
+        settings.setValue(QStringLiteral("lastFileDialogDir"),
+                          QFileInfo(fileName).absolutePath());
     });
 }
 
