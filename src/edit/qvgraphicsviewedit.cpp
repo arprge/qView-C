@@ -276,7 +276,7 @@ void QVGraphicsView::showPixmap(const QPixmap &pixmap)
     scaledSize = loadedPixmapItem->boundingRect().size().toSize();
 }
 
-bool QVGraphicsView::beginEdit(const EditMode &mode)
+bool QVGraphicsView::beginEdit(EditMode mode)
 {
     if (mode == EditMode::None) {
         cancelEdit();

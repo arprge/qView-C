@@ -817,12 +817,12 @@ void QVGraphicsView::jumpToNextFrame()
     imageCore.jumpToNextFrame();
 }
 
-void QVGraphicsView::setPaused(const bool &desiredState)
+void QVGraphicsView::setPaused(bool desiredState)
 {
     imageCore.setPaused(desiredState);
 }
 
-void QVGraphicsView::setSpeed(const int &desiredSpeed)
+void QVGraphicsView::setSpeed(int desiredSpeed)
 {
     imageCore.setSpeed(desiredSpeed);
 }
