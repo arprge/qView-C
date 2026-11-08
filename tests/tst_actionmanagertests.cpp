@@ -4,6 +4,7 @@
 #include "qveditpanel.h"
 #include "qvimagecore.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QEvent>
 #include <QPushButton>
@@ -28,12 +29,49 @@ private slots:
     void testBrightnessContrastOpaque();
     void testBrightnessContrastLargeImage();
     void testClampCropRect();
-    void testEditPanelUxBehavior();
+    void testEditPanelCropBehavior();
+    void testEditPanelAdjustBehavior();
+    void testEditPanelDrawBehavior();
+
+private:
+    static QPushButton *findVisibleButton(QVEditPanel &panel, const QString &text);
+    static QToolButton *findVisibleToolButton(QVEditPanel &panel, const QString &text);
+    static QSlider *findSliderByToolTip(QVEditPanel &panel, const QString &text);
 };
 
 ActionManagerTests::ActionManagerTests() { }
 
 ActionManagerTests::~ActionManagerTests() { }
+
+QPushButton *ActionManagerTests::findVisibleButton(QVEditPanel &panel, const QString &text)
+{
+    const QList<QPushButton *> buttons = panel.findChildren<QPushButton *>();
+    for (QPushButton *button : buttons) {
+        if (button->text() == text && button->isVisible())
+            return button;
+    }
+    return nullptr;
+}
+
+QToolButton *ActionManagerTests::findVisibleToolButton(QVEditPanel &panel, const QString &text)
+{
+    const QList<QToolButton *> buttons = panel.findChildren<QToolButton *>();
+    for (QToolButton *button : buttons) {
+        if (button->text() == text && button->isVisible())
+            return button;
+    }
+    return nullptr;
+}
+
+QSlider *ActionManagerTests::findSliderByToolTip(QVEditPanel &panel, const QString &text)
+{
+    const QList<QSlider *> sliders = panel.findChildren<QSlider *>();
+    for (QSlider *slider : sliders) {
+        if (slider->toolTip().contains(text))
+            return slider;
+    }
+    return nullptr;
+}
 
 void ActionManagerTests::testClonedActionsUntracked()
 {
@@ -62,18 +100,19 @@ void ActionManagerTests::testEditActionsRegistered()
 {
     const auto &actionManager = qvApp->getActionManager();
 
-    auto *cropAction = actionManager.getAction("editcrop");
-    auto *brightnessContrastAction = actionManager.getAction("brightnesscontrast");
-    auto *drawAction = actionManager.getAction("draw");
+    const QAction *cropAction = actionManager.getAction("editcrop");
+    const QAction *brightnessContrastAction = actionManager.getAction("brightnesscontrast");
+    const QAction *drawAction = actionManager.getAction("draw");
 
     QVERIFY(cropAction);
     QVERIFY(brightnessContrastAction);
     QVERIFY(drawAction);
-    QCOMPARE(drawAction->data().toStringList().last(), QString("stillimagedisable"));
+
+    const QString stillImageDisable = QStringLiteral("stillimagedisable");
+    QCOMPARE(drawAction->data().toStringList().last(), stillImageDisable);
+    QCOMPARE(cropAction->data().toStringList().last(), stillImageDisable);
+    QCOMPARE(brightnessContrastAction->data().toStringList().last(), stillImageDisable);
     QVERIFY(!drawAction->isEnabled());
-    QCOMPARE(cropAction->data().toStringList().last(), QString("stillimagedisable"));
-    QCOMPARE(brightnessContrastAction->data().toStringList().last(),
-             QString("stillimagedisable"));
     QVERIFY(!cropAction->isEnabled());
     QVERIFY(!brightnessContrastAction->isEnabled());
 }
@@ -174,7 +213,7 @@ void ActionManagerTests::testClampCropRect()
     QVERIFY(QVImageCore::clampCropRect(QRect(), size).isEmpty());
 }
 
-void ActionManagerTests::testEditPanelUxBehavior()
+void ActionManagerTests::testEditPanelCropBehavior()
 {
     QVEditPanel panel;
     panel.show();
@@ -186,37 +225,35 @@ void ActionManagerTests::testEditPanelUxBehavior()
     QEvent fontEvent(QEvent::FontChange);
     QApplication::sendEvent(&panel, &fontEvent);
 
-    const auto findButton = [&panel](const QString &text) -> QPushButton * {
-        for (auto *btn : panel.findChildren<QPushButton *>()) {
-            if (btn->text() == text && btn->isVisible())
-                return btn;
-        }
-        return nullptr;
-    };
-
     // Crop mode: live dimensions readout, aspect ratio presets, and Reset button state
     panel.setMode(QVGraphicsView::EditMode::Crop);
+
     panel.setCropDimensions(QRect(0, 0, 1920, 1080), QSize(1920, 1080));
-    QPushButton *cropResetBtn = findButton("Reset");
-    QVERIFY(cropResetBtn);
-    QVERIFY(!cropResetBtn->isEnabled());
+    QPushButton *cropResetButton = findVisibleButton(panel, QStringLiteral("Reset"));
+    QVERIFY(cropResetButton);
+    QVERIFY(!cropResetButton->isEnabled());
 
     panel.setCropDimensions(QRect(100, 100, 800, 600), QSize(1920, 1080));
-    QVERIFY(cropResetBtn->isEnabled());
+    QVERIFY(cropResetButton->isEnabled());
+
+    QToolButton *squarePreset = findVisibleToolButton(panel, QStringLiteral("1:1"));
+    QVERIFY(squarePreset);
 
     QSignalSpy ratioSpy(&panel, &QVEditPanel::cropAspectRatioChanged);
-    for (auto *tb : panel.findChildren<QToolButton *>()) {
-        if (tb->text() == "1:1") {
-            tb->click();
-            break;
-        }
-    }
+    squarePreset->click();
     QCOMPARE(ratioSpy.count(), 1);
     QCOMPARE(ratioSpy.at(0).at(0).toSizeF(), QSizeF(1, 1));
 
     QSignalSpy resetCropSpy(&panel, &QVEditPanel::resetCropRequested);
-    cropResetBtn->click();
+    cropResetButton->click();
     QCOMPARE(resetCropSpy.count(), 1);
+}
+
+void ActionManagerTests::testEditPanelAdjustBehavior()
+{
+    QVEditPanel panel;
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
     // Adjust mode: Reset and Compare start disabled; modifying a slider enables them
     panel.setMode(QVGraphicsView::EditMode::Adjust);
@@ -225,41 +262,35 @@ void ActionManagerTests::testEditPanelUxBehavior()
     QCOMPARE(panel.saturation(), 0);
     QCOMPARE(panel.warmth(), 0);
 
-    QPushButton *compareBtn = findButton("Compare");
-    QPushButton *resetBtn = findButton("Reset");
-    QVERIFY(compareBtn && resetBtn);
-    QVERIFY(!compareBtn->isEnabled());
-    QVERIFY(!resetBtn->isEnabled());
+    QPushButton *compareButton = findVisibleButton(panel, QStringLiteral("Compare"));
+    QPushButton *resetButton = findVisibleButton(panel, QStringLiteral("Reset"));
+    QVERIFY(compareButton && resetButton);
+    QVERIFY(!compareButton->isEnabled());
+    QVERIFY(!resetButton->isEnabled());
 
-    QSlider *brightnessSlider = nullptr;
-    for (auto *s : panel.findChildren<QSlider *>()) {
-        if (s->toolTip().contains("Brightness")) {
-            brightnessSlider = s;
-            break;
-        }
-    }
+    QSlider *brightnessSlider = findSliderByToolTip(panel, QStringLiteral("Brightness"));
     QVERIFY(brightnessSlider);
 
     QSignalSpy adjustSpy(&panel, &QVEditPanel::brightnessContrastChanged);
     brightnessSlider->setValue(40);
     QCOMPARE(panel.brightness(), 40);
-    QVERIFY(compareBtn->isEnabled());
-    QVERIFY(resetBtn->isEnabled());
+    QVERIFY(compareButton->isEnabled());
+    QVERIFY(resetButton->isEnabled());
     QCOMPARE(adjustSpy.count(), 1);
 
     // Press & hold Compare emits compareOriginalChanged(true/false)
     QSignalSpy compareSpy(&panel, &QVEditPanel::compareOriginalChanged);
-    QTest::mousePress(compareBtn, Qt::LeftButton);
-    QTest::mouseRelease(compareBtn, Qt::LeftButton);
+    QTest::mousePress(compareButton, Qt::LeftButton);
+    QTest::mouseRelease(compareButton, Qt::LeftButton);
     QCOMPARE(compareSpy.count(), 2);
     QCOMPARE(compareSpy.at(0).at(0).toBool(), true);
     QCOMPARE(compareSpy.at(1).at(0).toBool(), false);
 
     // Clicking Reset resets all sliders to 0 and disables Compare & Reset
-    resetBtn->click();
+    resetButton->click();
     QCOMPARE(panel.brightness(), 0);
-    QVERIFY(!compareBtn->isEnabled());
-    QVERIFY(!resetBtn->isEnabled());
+    QVERIFY(!compareButton->isEnabled());
+    QVERIFY(!resetButton->isEnabled());
 
     // Clicking on left side of track jumps directly toward negative values
     QTest::mousePress(brightnessSlider, Qt::LeftButton, Qt::NoModifier,
@@ -274,42 +305,44 @@ void ActionManagerTests::testEditPanelUxBehavior()
     QTest::mouseDClick(brightnessSlider, Qt::LeftButton, Qt::NoModifier,
                        brightnessSlider->rect().center());
     QCOMPARE(panel.brightness(), 0);
+}
+
+void ActionManagerTests::testEditPanelDrawBehavior()
+{
+    QVEditPanel panel;
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
     // Draw mode: Undo and Clear track drawing history count
     panel.setMode(QVGraphicsView::EditMode::Draw);
-    QPushButton *undoBtn = findButton("Undo");
-    QPushButton *clearBtn = findButton("Clear");
-    QVERIFY(undoBtn && clearBtn);
-    QVERIFY(!undoBtn->isEnabled());
-    QVERIFY(!clearBtn->isEnabled());
+    QPushButton *undoButton = findVisibleButton(panel, QStringLiteral("Undo"));
+    QPushButton *clearButton = findVisibleButton(panel, QStringLiteral("Clear"));
+    QVERIFY(undoButton && clearButton);
+    QVERIFY(!undoButton->isEnabled());
+    QVERIFY(!clearButton->isEnabled());
 
     panel.setDrawHistoryCount(2);
-    QVERIFY(undoBtn->isEnabled());
-    QVERIFY(clearBtn->isEnabled());
+    QVERIFY(undoButton->isEnabled());
+    QVERIFY(clearButton->isEnabled());
 
     QSignalSpy clearSpy(&panel, &QVEditPanel::clearDrawingsRequested);
-    clearBtn->click();
+    clearButton->click();
     QCOMPARE(clearSpy.count(), 1);
 
     panel.setDrawHistoryCount(0);
-    QVERIFY(!undoBtn->isEnabled());
-    QVERIFY(!clearBtn->isEnabled());
+    QVERIFY(!undoButton->isEnabled());
+    QVERIFY(!clearButton->isEnabled());
 
     // Switching tool updates DrawSettings
+    QToolButton *rectangleButton = findVisibleToolButton(panel, QStringLiteral("Rectangle"));
+    QVERIFY(rectangleButton);
+
     QSignalSpy drawSpy(&panel, &QVEditPanel::drawSettingsChanged);
-    QToolButton *rectBtn = nullptr;
-    for (auto *tb : panel.findChildren<QToolButton *>()) {
-        if (tb->text() == "Rectangle") {
-            rectBtn = tb;
-            break;
-        }
-    }
-    QVERIFY(rectBtn);
-    rectBtn->click();
+    rectangleButton->click();
     QCOMPARE(panel.drawSettings().tool, QVGraphicsView::DrawSettings::Tool::Rectangle);
     QCOMPARE(drawSpy.count(), 1);
 
-    // Ensure Draw panel stays 1-row slim vertically and fits typical window widths
+    // Ensure the Draw panel stays a single slim row vertically
     QVERIFY2(panel.minimumSizeHint().height() < 80,
              qPrintable(QString("Draw panel too tall: %1").arg(panel.minimumSizeHint().height())));
 }

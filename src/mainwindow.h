@@ -12,6 +12,7 @@
 #include <QStack>
 
 class QVEditPanel;
+class QMenu;
 
 namespace Ui {
 class MainWindow;
@@ -173,10 +174,13 @@ private slots:
     void replaceOriginalWithEdit();
 
 private:
+    QPoint adjustedContextMenuPosition(QMenu *menu, const QPoint &globalPos,
+                                       const QPoint &localPos) const;
+
     Ui::MainWindow *ui;
     QVGraphicsView *graphicsView;
 
-    QVEditPanel *editPanel;
+    QVEditPanel *editPanel = nullptr;
 
     QMenu *contextMenu;
     QMenu *virtualMenu;

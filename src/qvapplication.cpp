@@ -14,11 +14,29 @@
 
 namespace {
 
+constexpr qreal compactScale = 0.78;
+constexpr qreal menuItemHeightScale = 0.80;
+constexpr qreal controlHeightScale = 0.86;
+
+constexpr int defaultSmallIconSize = 16;
+constexpr int minimumSmallIconSize = 12;
+constexpr int minimumButtonIconSize = 14;
+constexpr int minimumMenuMargin = 1;
+constexpr int minimumItemSpacing = 2;
+constexpr int minimumLayoutMargin = 3;
+constexpr int defaultMenuItemHeight = 22;
+constexpr int minimumMenuItemHeight = 18;
+constexpr int minimumControlHeight = 20;
+
+constexpr int minimumUiScale = 50;
+constexpr int maximumUiScale = 200;
+constexpr int defaultUiScale = 100;
+
 class QVCompactProxyStyle : public QProxyStyle
 {
 public:
     explicit QVCompactProxyStyle(qreal scaleFactor, QStyle *baseStyle = nullptr)
-        : QProxyStyle(baseStyle), factor(scaleFactor)
+        : QProxyStyle(baseStyle), scaleFactor(scaleFactor)
     {
     }
 
@@ -26,31 +44,32 @@ public:
                     const QWidget *widget) const override
     {
         const int base = QProxyStyle::pixelMetric(metric, option, widget);
-        // Compact factor makes default 100% denser and scales smoothly with UiScale
-        const qreal compact = factor * 0.78;
+        // The compact factor keeps the default 100% density and scales smoothly with UiScale
+        const qreal compact = scaleFactor * compactScale;
+
         switch (metric) {
         case PM_SmallIconSize:
-            return qMax(12, qRound(16 * factor));
+            return qMax(minimumSmallIconSize, qRound(defaultSmallIconSize * scaleFactor));
         case PM_ButtonIconSize:
         case PM_ListViewIconSize:
-            return qMax(14, qRound(base * compact));
+            return qMax(minimumButtonIconSize, qRound(base * compact));
         case PM_SubMenuOverlap:
             return -2;
         case PM_MenuVMargin:
         case PM_MenuHMargin:
         case PM_MenuBarVMargin:
         case PM_MenuBarHMargin:
-            return qMax(1, qRound(base * 0.5 * factor));
+            return qMax(minimumMenuMargin, qRound(base * 0.5 * scaleFactor));
         case PM_MenuBarItemSpacing:
         case PM_ToolBarItemSpacing:
-            return qMax(2, qRound(base * 0.65 * factor));
+            return qMax(minimumItemSpacing, qRound(base * 0.65 * scaleFactor));
         case PM_LayoutLeftMargin:
         case PM_LayoutTopMargin:
         case PM_LayoutRightMargin:
         case PM_LayoutBottomMargin:
         case PM_LayoutHorizontalSpacing:
         case PM_LayoutVerticalSpacing:
-            return qMax(3, qRound(base * compact));
+            return qMax(minimumLayoutMargin, qRound(base * compact));
         default:
             return base;
         }
@@ -59,22 +78,26 @@ public:
     QSize sizeFromContents(ContentsType type, const QStyleOption *option,
                            const QSize &contentsSize, const QWidget *widget) const override
     {
-        QSize sz = QProxyStyle::sizeFromContents(type, option, contentsSize, widget);
+        QSize size = QProxyStyle::sizeFromContents(type, option, contentsSize, widget);
+
         if (type == CT_MenuItem) {
-            if (const auto *menuOpt = qstyleoption_cast<const QStyleOptionMenuItem *>(option)) {
-                if (menuOpt->menuItemType != QStyleOptionMenuItem::Separator) {
-                    const int minHeight = qMax(18, qRound(22 * factor));
-                    sz.setHeight(qMax(minHeight, qRound(sz.height() * 0.80 * factor)));
-                }
+            const auto *menuOption = qstyleoption_cast<const QStyleOptionMenuItem *>(option);
+            if (menuOption && menuOption->menuItemType != QStyleOptionMenuItem::Separator) {
+                const int minimumHeight =
+                        qMax(minimumMenuItemHeight, qRound(defaultMenuItemHeight * scaleFactor));
+                size.setHeight(qMax(minimumHeight,
+                                    qRound(size.height() * menuItemHeightScale * scaleFactor)));
             }
         } else if (type == CT_PushButton || type == CT_ComboBox || type == CT_SpinBox) {
-            sz.setHeight(qMax(20, qRound(sz.height() * 0.86 * factor)));
+            size.setHeight(qMax(minimumControlHeight,
+                                qRound(size.height() * controlHeightScale * scaleFactor)));
         }
-        return sz;
+
+        return size;
     }
 
 private:
-    qreal factor;
+    const qreal scaleFactor;
 };
 
 } // namespace
@@ -459,17 +482,26 @@ void QVApplication::ensureFontLoaded(const QString &path)
 
 void QVApplication::applyUiScale()
 {
-    const int uiScale = qBound(50, getSettingsManager().getInt(SettingsManager::Setting::UiScale), 200);
+    const int uiScale =
+            qBound(minimumUiScale,
+                   getSettingsManager().getInt(SettingsManager::Setting::UiScale),
+                   maximumUiScale);
+
+    if (uiScale == appliedUiScale)
+        return;
+
+    appliedUiScale = uiScale;
     const qreal factor = uiScale / 100.0;
 
     QFont scaledFont = baseApplicationFont;
-    if (uiScale != 100) {
+    if (uiScale != defaultUiScale) {
         if (scaledFont.pointSizeF() > 0) {
             scaledFont.setPointSizeF(qMax(6.0, scaledFont.pointSizeF() * factor));
         } else if (scaledFont.pixelSize() > 0) {
             scaledFont.setPixelSize(qMax(8, qRound(scaledFont.pixelSize() * factor)));
         }
     }
+
     if (font() != scaledFont)
         setFont(scaledFont);
 
