@@ -69,6 +69,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(graphicsView, &QVGraphicsView::cancelSlideshow, this, &MainWindow::cancelSlideshow);
     connect(graphicsView, &QVGraphicsView::editModeChanged, this, &MainWindow::onEditModeChanged);
     connect(graphicsView, &QVGraphicsView::commitRequested, this, &MainWindow::onCommitRequested);
+    connect(graphicsView, &QVGraphicsView::cropRectChanged, editPanel,
+            &QVEditPanel::setCropDimensions);
+    connect(editPanel, &QVEditPanel::cropAspectRatioChanged, graphicsView,
+            &QVGraphicsView::setCropAspectRatio);
+    connect(editPanel, &QVEditPanel::resetCropRequested, graphicsView,
+            &QVGraphicsView::resetCropRect);
     connect(editPanel, &QVEditPanel::drawSettingsChanged, graphicsView,
             &QVGraphicsView::setDrawSettings);
     connect(editPanel, &QVEditPanel::undoDrawingRequested, graphicsView,

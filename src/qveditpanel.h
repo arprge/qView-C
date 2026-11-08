@@ -22,6 +22,7 @@ public:
     explicit QVEditPanel(QWidget *parent = nullptr);
 
     void setMode(QVGraphicsView::EditMode mode);
+    void setCropDimensions(const QRect &rect, const QSize &imageSize);
     void setDrawHistoryCount(int count);
 
     int brightness() const;
@@ -32,6 +33,8 @@ public:
     QVGraphicsView::DrawSettings drawSettings() const { return currentDrawSettings; }
 
 signals:
+    void cropAspectRatioChanged(const QSizeF &aspect);
+    void resetCropRequested();
     void brightnessContrastChanged(int brightness, int contrast, int saturation, int warmth);
     void compareOriginalChanged(bool showOriginal);
     void drawSettingsChanged(const QVGraphicsView::DrawSettings &settings);
@@ -52,6 +55,10 @@ private:
     QWidget *cropPage = nullptr;
     QWidget *adjustPage = nullptr;
     QWidget *drawPage = nullptr;
+
+    QList<QToolButton *> aspectButtons;
+    QLabel *cropSizeLabel = nullptr;
+    QPushButton *cropResetButton = nullptr;
 
     QSlider *brightnessSlider = nullptr;
     QSlider *contrastSlider = nullptr;

@@ -249,20 +249,74 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
     contentLayout->addWidget(stack);
 
     // -------------------------------------------------------------------------
-    // 1. Crop Page (unchanged)
+    // 1. Crop Page (UX-focused: aspect ratio presets, live W×H readout, Reset)
     // -------------------------------------------------------------------------
     cropPage = new QWidget(stack);
     auto *cropLayout = new QHBoxLayout(cropPage);
     cropLayout->setContentsMargins(0, 0, 0, 0);
-    cropLayout->setSpacing(6);
+    cropLayout->setSpacing(4);
+
+    auto *aspectGroup = new QButtonGroup(cropPage);
+    const struct
+    {
+        QString text;
+        QString tooltip;
+        QSizeF ratio;
+    } ratios[] = {
+        { tr("Free"), tr("Freeform crop (hold Shift for 1:1 square)"), QSizeF(0, 0) },
+        { tr("Original"), tr("Lock to original image aspect ratio"), QSizeF(-1, -1) },
+        { QStringLiteral("1:1"), tr("Square aspect ratio (1:1)"), QSizeF(1, 1) },
+        { QStringLiteral("4:3"), tr("Standard aspect ratio (4:3)"), QSizeF(4, 3) },
+        { QStringLiteral("16:9"), tr("Widescreen aspect ratio (16:9)"), QSizeF(16, 9) },
+    };
+    for (int i = 0; i < 5; i++) {
+        const auto &entry = ratios[i];
+        auto *btn = new QToolButton(cropPage);
+        btn->setText(entry.text);
+        btn->setToolTip(entry.tooltip);
+        btn->setAutoRaise(true);
+        btn->setCheckable(true);
+        btn->setFocusPolicy(Qt::NoFocus);
+        btn->setChecked(i == 0);
+        aspectGroup->addButton(btn);
+        aspectButtons.append(btn);
+        cropLayout->addWidget(btn);
+
+        const QSizeF ratio = entry.ratio;
+        connect(btn, &QToolButton::clicked, this, [this, ratio]() {
+            if (cropResetButton && ratio.isValid() && !ratio.isNull())
+                cropResetButton->setEnabled(true);
+            emit cropAspectRatioChanged(ratio);
+        });
+    }
+
+    cropLayout->addWidget(makeVerticalSeparator(cropPage));
+
+    cropSizeLabel = new QLabel(cropPage);
+    cropSizeLabel->setFocusPolicy(Qt::NoFocus);
+    cropSizeLabel->setToolTip(tr("Current crop dimensions in pixels"));
+    cropLayout->addWidget(cropSizeLabel);
+
+    cropLayout->addStretch();
+
     auto *cropHint = new QLabel(
-            tr("Drag the borders or corners to crop, drag inside to move · Enter to save a "
-               "copy · Ctrl+Enter to replace · Esc to cancel"),
+            tr("Drag borders to crop, inside to move · Enter: Save copy · Ctrl+Enter: Replace"),
             cropPage);
     cropHint->setFocusPolicy(Qt::NoFocus);
-    cropLayout->addStretch();
     cropLayout->addWidget(cropHint);
+
     cropLayout->addStretch();
+
+    cropResetButton = new QPushButton(tr("Reset"), cropPage);
+    cropResetButton->setFocusPolicy(Qt::NoFocus);
+    cropResetButton->setToolTip(tr("Reset crop to full image"));
+    cropResetButton->setEnabled(false);
+    connect(cropResetButton, &QPushButton::clicked, this, [this]() {
+        if (!aspectButtons.isEmpty())
+            aspectButtons.first()->setChecked(true);
+        emit resetCropRequested();
+    });
+    cropLayout->addWidget(cropResetButton);
     stack->addWidget(cropPage);
 
     // -------------------------------------------------------------------------
@@ -538,6 +592,8 @@ void QVEditPanel::setMode(QVGraphicsView::EditMode mode)
     QWidget *targetPage = nullptr;
     switch (mode) {
     case QVGraphicsView::EditMode::Crop:
+        if (!aspectButtons.isEmpty())
+            aspectButtons.first()->setChecked(true);
         targetPage = cropPage;
         break;
     case QVGraphicsView::EditMode::Adjust: {
@@ -574,6 +630,27 @@ void QVEditPanel::setMode(QVGraphicsView::EditMode mode)
     stack->setCurrentWidget(targetPage);
     stack->updateGeometry();
     updateGeometry();
+}
+
+void QVEditPanel::setCropDimensions(const QRect &rect, const QSize &imageSize)
+{
+    if (!cropSizeLabel || !cropResetButton)
+        return;
+
+    if (rect.isEmpty() || imageSize.isEmpty()) {
+        cropSizeLabel->clear();
+        cropResetButton->setEnabled(false);
+        return;
+    }
+
+    const bool modified = (rect != QRect(QPoint(0, 0), imageSize));
+    cropSizeLabel->setText(tr("%1 × %2 px").arg(rect.width()).arg(rect.height()));
+    QFont f = cropSizeLabel->font();
+    f.setBold(modified);
+    cropSizeLabel->setFont(f);
+
+    const bool nonFreeRatio = !aspectButtons.isEmpty() && !aspectButtons.first()->isChecked();
+    cropResetButton->setEnabled(modified || nonFreeRatio);
 }
 
 void QVEditPanel::setDrawHistoryCount(int count)
