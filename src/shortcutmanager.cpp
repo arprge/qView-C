@@ -144,7 +144,7 @@ void ShortcutManager::initializeShortcutsList()
             { tr("Flip"), "flip", QStringList(QKeySequence(Qt::CTRL | Qt::Key_F).toString()), {} });
     shortcutsList.append(
             { tr("Crop"), "editcrop", QStringList(QKeySequence(Qt::Key_C).toString()), {} });
-    shortcutsList.append({ tr("Brightness/Contrast"),
+    shortcutsList.append({ tr("Adjust"),
                            "brightnesscontrast",
                            QStringList(QKeySequence(Qt::Key_B).toString()),
                            {} });

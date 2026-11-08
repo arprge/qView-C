@@ -55,10 +55,11 @@ public:
             return qMax(minimumButtonIconSize, qRound(base * compact));
         case PM_SubMenuOverlap:
             return -2;
-        case PM_MenuVMargin:
         case PM_MenuHMargin:
-        case PM_MenuBarVMargin:
         case PM_MenuBarHMargin:
+            return qMax(minimumMenuMargin, qRound(base * 0.4 * scaleFactor));
+        case PM_MenuVMargin:
+        case PM_MenuBarVMargin:
             return qMax(minimumMenuMargin, qRound(base * 0.5 * scaleFactor));
         case PM_MenuBarItemSpacing:
         case PM_ToolBarItemSpacing:
@@ -87,6 +88,9 @@ public:
                         qMax(minimumMenuItemHeight, qRound(defaultMenuItemHeight * scaleFactor));
                 size.setHeight(qMax(minimumHeight,
                                     qRound(size.height() * menuItemHeightScale * scaleFactor)));
+                // Keep menu items compact horizontally according to scaleFactor
+                if (scaleFactor < 1.0)
+                    size.setWidth(qRound(size.width() * qMax(0.75, scaleFactor)));
             }
         } else if (type == CT_PushButton || type == CT_ComboBox || type == CT_SpinBox) {
             size.setHeight(qMax(minimumControlHeight,
