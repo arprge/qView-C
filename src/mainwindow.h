@@ -97,6 +97,8 @@ public:
 
     void brightnessContrast();
 
+    void draw();
+
     void firstFile();
 
     void previousFile();

@@ -9,6 +9,10 @@
 #include <QGraphicsScene>
 #include <QGraphicsPathItem>
 #include <QGraphicsRectItem>
+#include <QGraphicsItem>
+#include <QGraphicsLineItem>
+#include <QGraphicsEllipseItem>
+#include <QPainter>
 #include <QKeyEvent>
 #include <QPainterPath>
 #include <QColor>
@@ -155,6 +159,12 @@ void QVGraphicsView::mousePressEvent(QMouseEvent *event)
         return;
     }
 
+    if (editMode == EditMode::Draw && event->button() == Qt::LeftButton) {
+        beginDrawing(mapToScene(event->pos()));
+        event->accept();
+        return;
+    }
+
     const auto startWindowMove = [this, event]() {
 #ifdef COCOA_LOADED
         return QVCocoaFunctions::startSystemMove(window());
@@ -217,6 +227,12 @@ void QVGraphicsView::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
+    if (editMode == EditMode::Draw && isDrawing) {
+        updateDrawing(mapToScene(event->pos()));
+        event->accept();
+        return;
+    }
+
     if (mousePressButton == Qt::LeftButton) {
         if (mousePressModifiers.testFlag(Qt::ControlModifier)
             && !event->modifiers().testFlag(Qt::ControlModifier)) {
@@ -239,21 +255,15 @@ void QVGraphicsView::mouseReleaseEvent(QMouseEvent *event)
     if (editMode == EditMode::Crop && event->button() == Qt::LeftButton && cropDragging) {
         cropDragging = false;
 
-        const QRect viewRect = QRect(cropDragStart, event->pos()).normalized();
-        const QRectF sceneRect = QRectF(mapToScene(viewRect).boundingRect())
-                                         .intersected(loadedPixmapItem->boundingRect());
+        updateCropOverlay(event->pos());
+        hasCropSelection = cropSelectionItem->isVisible();
 
-        if (viewRect.width() >= 2 && viewRect.height() >= 2 && !sceneRect.isEmpty()) {
-            hasCropSelection = true;
-            cropSelectionItem->setRect(sceneRect);
-            cropSelectionItem->show();
-            updateCropDimOverlay(sceneRect);
-        } else {
-            hasCropSelection = false;
-            cropSelectionItem->hide();
-            cropDimItem->hide();
-        }
+        event->accept();
+        return;
+    }
 
+    if (editMode == EditMode::Draw && event->button() == Qt::LeftButton && isDrawing) {
+        finishDrawing(mapToScene(event->pos()));
         event->accept();
         return;
     }
@@ -932,10 +942,6 @@ bool QVGraphicsView::beginEdit(const EditMode &mode)
     if (!getCurrentFileDetails().isPixmapLoaded || getCurrentFileDetails().isMovieLoaded)
         return false;
 
-    // Drawing is implemented in a later phase.
-    if (mode == EditMode::Draw)
-        return false;
-
     if (isEditing())
         cancelEdit();
 
@@ -951,6 +957,7 @@ bool QVGraphicsView::beginEdit(const EditMode &mode)
     cropSelectionItem->hide();
     cropDragging = false;
     hasCropSelection = false;
+    clearDrawings();
 
     mousePressButton = Qt::NoButton;
     mousePressModifiers = Qt::NoModifier;
@@ -958,13 +965,15 @@ bool QVGraphicsView::beginEdit(const EditMode &mode)
     editMode = mode;
 
     switch (editMode) {
-    case EditMode::Crop: {
+    case EditMode::Crop:
+    case EditMode::Draw: {
         setDragMode(QGraphicsView::NoDrag);
         viewport()->setCursor(Qt::CrossCursor);
         break;
     }
     case EditMode::Adjust: {
         editBasePixmap = imageCore.getLoadedPixmap();
+        editBaseImage = editBasePixmap.toImage();
         loadedPixmapItem->setPixmap(editBasePixmap);
         scaledSize = loadedPixmapItem->boundingRect().size().toSize();
         setDragMode(QGraphicsView::ScrollHandDrag);
@@ -1004,8 +1013,25 @@ bool QVGraphicsView::applyEdit()
             applyBrightnessContrastPreview();
         }
 
+        // Nothing changed: stay in edit mode instead of prompting to save
+        if (pendingBrightness == 0 && pendingContrast == 0)
+            return false;
+
         // The preview is already stored in imageCore, so there is nothing
         // further to commit.
+        committed = true;
+    } else if (editMode == EditMode::Draw) {
+        // Nothing drawn: stay in edit mode instead of prompting to save
+        if (drawingItems.isEmpty())
+            return false;
+
+        const QPixmap flattened = flattenDrawings();
+        if (flattened.isNull())
+            return false;
+
+        imageCore.setPreviewPixmap(flattened);
+        loadedPixmapItem->setPixmap(flattened);
+        scaledSize = loadedPixmapItem->boundingRect().size().toSize();
         committed = true;
     }
 
@@ -1044,6 +1070,147 @@ void QVGraphicsView::setBrightnessContrastPreview(int brightness, int contrast)
     adjustPreviewTimer->start();
 }
 
+void QVGraphicsView::undoLastDrawing()
+{
+    if (drawingItems.isEmpty())
+        return;
+
+    delete drawingItems.takeLast();
+}
+
+QPen QVGraphicsView::makeDrawingPen() const
+{
+    QPen pen(drawSettings.color, drawSettings.width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    return pen;
+}
+
+void QVGraphicsView::beginDrawing(const QPointF &scenePos)
+{
+    drawStartScenePos = scenePos;
+    isDrawing = true;
+
+    const QPen pen = makeDrawingPen();
+    QGraphicsItem *item = nullptr;
+
+    switch (drawSettings.tool) {
+    case DrawSettings::Tool::Pen: {
+        activePenPath = QPainterPath(scenePos);
+        // Tiny segment so a single click leaves a dot (round caps)
+        activePenPath.lineTo(scenePos + QPointF(0.01, 0));
+        auto *pathItem = new QGraphicsPathItem(activePenPath);
+        pathItem->setPen(pen);
+        pathItem->setBrush(Qt::NoBrush);
+        item = pathItem;
+        break;
+    }
+    case DrawSettings::Tool::Line: {
+        auto *lineItem = new QGraphicsLineItem(QLineF(scenePos, scenePos));
+        lineItem->setPen(pen);
+        item = lineItem;
+        break;
+    }
+    case DrawSettings::Tool::Rectangle: {
+        auto *rectItem = new QGraphicsRectItem(QRectF(scenePos, QSizeF(0, 0)));
+        rectItem->setPen(pen);
+        rectItem->setBrush(Qt::NoBrush);
+        item = rectItem;
+        break;
+    }
+    case DrawSettings::Tool::Ellipse: {
+        auto *ellipseItem = new QGraphicsEllipseItem(QRectF(scenePos, QSizeF(0, 0)));
+        ellipseItem->setPen(pen);
+        ellipseItem->setBrush(Qt::NoBrush);
+        item = ellipseItem;
+        break;
+    }
+    }
+
+    item->setZValue(5);
+    item->setAcceptedMouseButtons(Qt::NoButton);
+    scene()->addItem(item);
+    activeDrawingItem = item;
+}
+
+void QVGraphicsView::updateDrawing(const QPointF &scenePos)
+{
+    if (!isDrawing || !activeDrawingItem)
+        return;
+
+    switch (drawSettings.tool) {
+    case DrawSettings::Tool::Pen: {
+        activePenPath.lineTo(scenePos);
+        static_cast<QGraphicsPathItem *>(activeDrawingItem)->setPath(activePenPath);
+        break;
+    }
+    case DrawSettings::Tool::Line: {
+        static_cast<QGraphicsLineItem *>(activeDrawingItem)
+                ->setLine(QLineF(drawStartScenePos, scenePos));
+        break;
+    }
+    case DrawSettings::Tool::Rectangle: {
+        static_cast<QGraphicsRectItem *>(activeDrawingItem)
+                ->setRect(QRectF(drawStartScenePos, scenePos).normalized());
+        break;
+    }
+    case DrawSettings::Tool::Ellipse: {
+        static_cast<QGraphicsEllipseItem *>(activeDrawingItem)
+                ->setRect(QRectF(drawStartScenePos, scenePos).normalized());
+        break;
+    }
+    }
+}
+
+void QVGraphicsView::finishDrawing(const QPointF &scenePos)
+{
+    updateDrawing(scenePos);
+
+    // Discard degenerate shapes (a plain click); pen clicks stay as dots
+    const QPointF delta = scenePos - drawStartScenePos;
+    const bool degenerate = qAbs(delta.x()) < 1 && qAbs(delta.y()) < 1;
+    if (activeDrawingItem && degenerate && drawSettings.tool != DrawSettings::Tool::Pen) {
+        delete activeDrawingItem;
+    } else if (activeDrawingItem) {
+        drawingItems.append(activeDrawingItem);
+    }
+
+    activeDrawingItem = nullptr;
+    activePenPath = QPainterPath();
+    isDrawing = false;
+}
+
+QPixmap QVGraphicsView::flattenDrawings() const
+{
+    QImage out = imageCore.getLoadedPixmap().toImage();
+    if (out.isNull())
+        return QPixmap();
+
+    // Render only the annotations on top of the already-copied base image
+    const bool pixmapWasVisible = loadedPixmapItem->isVisible();
+    loadedPixmapItem->hide();
+    cropDimItem->hide();
+    cropSelectionItem->hide();
+
+    {
+        QPainter painter(&out);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setClipRect(out.rect());
+        scene()->render(&painter, QRectF(out.rect()), QRectF(out.rect()));
+    }
+
+    loadedPixmapItem->setVisible(pixmapWasVisible);
+
+    return QPixmap::fromImage(out);
+}
+
+void QVGraphicsView::clearDrawings()
+{
+    activeDrawingItem = nullptr;
+    activePenPath = QPainterPath();
+    isDrawing = false;
+    qDeleteAll(drawingItems);
+    drawingItems.clear();
+}
+
 void QVGraphicsView::resetEditState()
 {
     if (!isEditing())
@@ -1051,6 +1218,8 @@ void QVGraphicsView::resetEditState()
 
     adjustPreviewTimer->stop();
     editBasePixmap = QPixmap();
+    editBaseImage = QImage();
+    clearDrawings();
 
     cropDragging = false;
     hasCropSelection = false;
@@ -1066,11 +1235,13 @@ void QVGraphicsView::resetEditState()
 
 void QVGraphicsView::applyBrightnessContrastPreview()
 {
-    if (editMode != EditMode::Adjust || editBasePixmap.isNull())
+    if (editMode != EditMode::Adjust || editBaseImage.isNull())
         return;
 
-    const QPixmap preview = QPixmap::fromImage(QVImageCore::applyBrightnessContrast(
-            editBasePixmap.toImage(), pendingBrightness, pendingContrast));
+    const QPixmap preview = (pendingBrightness == 0 && pendingContrast == 0)
+            ? editBasePixmap
+            : QPixmap::fromImage(QVImageCore::applyBrightnessContrast(
+                    editBaseImage, pendingBrightness, pendingContrast));
 
     imageCore.setPreviewPixmap(preview);
     loadedPixmapItem->setPixmap(preview);
@@ -1080,7 +1251,8 @@ void QVGraphicsView::applyBrightnessContrastPreview()
 void QVGraphicsView::updateCropOverlay(const QPoint &currentPos)
 {
     const QRect viewRect = QRect(cropDragStart, currentPos).normalized();
-    const QRectF sceneRect = QRectF(mapToScene(viewRect).boundingRect())
+    // Snap to whole image pixels so the overlay matches what will be cropped
+    const QRectF sceneRect = QRectF(mapToScene(viewRect).boundingRect().toAlignedRect())
                                      .intersected(loadedPixmapItem->boundingRect());
 
     if (viewRect.width() < 2 || viewRect.height() < 2 || sceneRect.isEmpty()) {

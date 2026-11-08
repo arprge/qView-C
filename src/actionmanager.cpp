@@ -271,6 +271,7 @@ QMenu *ActionManager::buildToolsMenu(bool addIcon, QWidget *parent)
 
     addCloneOfAction(toolsMenu, "editcrop");
     addCloneOfAction(toolsMenu, "brightnesscontrast");
+    addCloneOfAction(toolsMenu, "draw");
     toolsMenu->addSeparator();
     addCloneOfAction(toolsMenu, "saveframeas");
     addCloneOfAction(toolsMenu, "pause");
@@ -622,6 +623,8 @@ void ActionManager::actionTriggered(QAction *triggeredAction, MainWindow *releva
         relevantWindow->crop();
     } else if (key == "brightnesscontrast") {
         relevantWindow->brightnessContrast();
+    } else if (key == "draw") {
+        relevantWindow->draw();
     } else if (key == "saveframeas") {
         relevantWindow->saveFrameAs();
     } else if (key == "pause") {
@@ -795,6 +798,11 @@ void ActionManager::initializeActionLibrary()
             tr("&Brightness/Contrast..."));
     brightnessContrastAction->setData({ "stillimagedisable" });
     actionLibrary.insert("brightnesscontrast", brightnessContrastAction);
+
+    auto *drawAction = new QAction(
+            QIcon::fromTheme("draw-freehand", QIcon::fromTheme("draw")), tr("&Draw"));
+    drawAction->setData({ "stillimagedisable" });
+    actionLibrary.insert("draw", drawAction);
 
     auto *saveFrameAsAction =
             new QAction(QIcon::fromTheme("document-save-as"), tr("Save Frame &As..."));

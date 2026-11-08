@@ -69,6 +69,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(graphicsView, &QVGraphicsView::cancelSlideshow, this, &MainWindow::cancelSlideshow);
     connect(graphicsView, &QVGraphicsView::editModeChanged, this, &MainWindow::onEditModeChanged);
     connect(graphicsView, &QVGraphicsView::commitRequested, this, &MainWindow::onCommitRequested);
+    connect(editPanel, &QVEditPanel::drawSettingsChanged, graphicsView,
+            &QVGraphicsView::setDrawSettings);
+    connect(editPanel, &QVEditPanel::undoDrawingRequested, graphicsView,
+            &QVGraphicsView::undoLastDrawing);
     connect(editPanel, &QVEditPanel::brightnessContrastChanged, graphicsView,
             &QVGraphicsView::setBrightnessContrastPreview);
 
@@ -1054,6 +1058,11 @@ void MainWindow::brightnessContrast()
     graphicsView->beginEdit(QVGraphicsView::EditMode::Adjust);
 }
 
+void MainWindow::draw()
+{
+    graphicsView->beginEdit(QVGraphicsView::EditMode::Draw);
+}
+
 void MainWindow::onEditModeChanged(QVGraphicsView::EditMode mode)
 {
     if (mode == QVGraphicsView::EditMode::None) {
@@ -1124,7 +1133,7 @@ void MainWindow::saveEditedCopy()
     saveDialog->setFileMode(QFileDialog::AnyFile);
     saveDialog->open();
 
-    connect(saveDialog, &QFileDialog::fileSelected, this, [=](const QString &fileName) {
+    connect(saveDialog, &QFileDialog::fileSelected, this, [this](const QString &fileName) {
         QString errorString;
         if (!graphicsView->saveCopy(fileName, &errorString)) {
             QMessageBox::warning(this, tr("Save Failed"),

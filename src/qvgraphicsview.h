@@ -8,6 +8,10 @@
 #include <QDir>
 #include <QTimer>
 #include <QFileInfo>
+#include <QColor>
+#include <QPainterPath>
+#include <QPen>
+#include <QList>
 
 class QGraphicsPathItem;
 class QGraphicsRectItem;
@@ -31,6 +35,14 @@ public:
 
     enum class CommitAction { SaveCopy, ReplaceOriginal };
     Q_ENUM(CommitAction)
+
+    struct DrawSettings
+    {
+        enum class Tool { Pen, Line, Rectangle, Ellipse };
+        Tool tool = Tool::Pen;
+        QColor color = Qt::red;
+        int width = 4;
+    };
 
     QMimeData *getMimeData() const;
     void loadMimeData(const QMimeData *mimeData);
@@ -67,6 +79,11 @@ public:
     EditMode getEditMode() const { return editMode; }
 
     void setBrightnessContrastPreview(int brightness, int contrast);
+
+    void setDrawSettings(const DrawSettings &settings) { drawSettings = settings; }
+    const DrawSettings &getDrawSettings() const { return drawSettings; }
+    void undoLastDrawing();
+    void clearDrawings();
 
     bool saveCopy(const QString &filePath, QString *errorString = nullptr) const
     {
@@ -189,7 +206,23 @@ private:
     // Brightness/contrast state
     QTimer *adjustPreviewTimer = nullptr;
     QPixmap editBasePixmap;
+    // Cached once per edit session so slider ticks don't re-convert the pixmap
+    QImage editBaseImage;
     int pendingBrightness = 0;
     int pendingContrast = 0;
+
+    // Draw state (annotations live in scene coordinates == image pixels while editing)
+    DrawSettings drawSettings;
+    QList<QGraphicsItem *> drawingItems;
+    QGraphicsItem *activeDrawingItem = nullptr;
+    QPainterPath activePenPath;
+    QPointF drawStartScenePos;
+    bool isDrawing = false;
+
+    void beginDrawing(const QPointF &scenePos);
+    void updateDrawing(const QPointF &scenePos);
+    void finishDrawing(const QPointF &scenePos);
+    QPen makeDrawingPen() const;
+    QPixmap flattenDrawings() const;
 };
 #endif // QVGRAPHICSVIEW_H

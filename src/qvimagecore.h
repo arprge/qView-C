@@ -111,6 +111,8 @@ public:
     QImage matchCurrentRotation(const QImage &imageToRotate);
     QPixmap matchCurrentRotation(const QPixmap &pixmapToRotate);
 
+    // Normalizes the rect and clamps it to the image bounds (empty if outside)
+    static QRect clampCropRect(const QRect &pixelRect, const QSize &imageSize);
     void cropImage(const QRect &pixelRect);
 
     // Update the loaded pixmap without notifying the view. Used for live

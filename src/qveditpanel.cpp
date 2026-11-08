@@ -1,10 +1,13 @@
 #include "qveditpanel.h"
 
+#include <QButtonGroup>
+#include <QColorDialog>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -79,15 +82,72 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
     adjustLayout->addWidget(resetButton);
     stack->addWidget(adjustPage);
 
-    // Draw page placeholder (drawing tools are added in a later phase)
+    // Draw page
     drawPage = new QWidget(stack);
     auto *drawLayout = new QHBoxLayout(drawPage);
     drawLayout->setContentsMargins(0, 0, 0, 0);
-    auto *drawHint = new QLabel(tr("Drawing tools are not available yet."), drawPage);
-    drawHint->setFocusPolicy(Qt::NoFocus);
+
+    auto *toolGroup = new QButtonGroup(drawPage);
+    const struct
+    {
+        QString text;
+        QVGraphicsView::DrawSettings::Tool tool;
+    } tools[] = {
+        { tr("Pen"), QVGraphicsView::DrawSettings::Tool::Pen },
+        { tr("Line"), QVGraphicsView::DrawSettings::Tool::Line },
+        { tr("Rectangle"), QVGraphicsView::DrawSettings::Tool::Rectangle },
+        { tr("Ellipse"), QVGraphicsView::DrawSettings::Tool::Ellipse },
+    };
+    for (const auto &entry : tools) {
+        auto *button = new QPushButton(entry.text, drawPage);
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setChecked(entry.tool == currentDrawSettings.tool);
+        toolGroup->addButton(button);
+        drawLayout->addWidget(button);
+        const auto tool = entry.tool;
+        connect(button, &QPushButton::clicked, this, [this, tool]() {
+            currentDrawSettings.tool = tool;
+            emit drawSettingsChanged(currentDrawSettings);
+        });
+    }
+
+    colorButton = new QPushButton(tr("Color"), drawPage);
+    colorButton->setFocusPolicy(Qt::NoFocus);
+    updateColorButton();
+    connect(colorButton, &QPushButton::clicked, this, [this]() {
+        const QColor color = QColorDialog::getColor(currentDrawSettings.color, this,
+                                                    tr("Select Color"),
+                                                    QColorDialog::ShowAlphaChannel);
+        if (!color.isValid())
+            return;
+        currentDrawSettings.color = color;
+        updateColorButton();
+        emit drawSettingsChanged(currentDrawSettings);
+    });
+
+    auto *widthLabel = new QLabel(tr("Width"), drawPage);
+    widthLabel->setFocusPolicy(Qt::NoFocus);
+    auto *widthSpin = new QSpinBox(drawPage);
+    widthSpin->setRange(1, 50);
+    widthSpin->setValue(currentDrawSettings.width);
+    widthSpin->setSuffix(tr(" px"));
+    widthSpin->setFocusPolicy(Qt::NoFocus);
+    connect(widthSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        currentDrawSettings.width = value;
+        emit drawSettingsChanged(currentDrawSettings);
+    });
+
+    auto *undoButton = new QPushButton(tr("Undo"), drawPage);
+    undoButton->setFocusPolicy(Qt::NoFocus);
+    connect(undoButton, &QPushButton::clicked, this, &QVEditPanel::undoDrawingRequested);
+
+    drawLayout->addSpacing(12);
+    drawLayout->addWidget(colorButton);
+    drawLayout->addWidget(widthLabel);
+    drawLayout->addWidget(widthSpin);
     drawLayout->addStretch();
-    drawLayout->addWidget(drawHint);
-    drawLayout->addStretch();
+    drawLayout->addWidget(undoButton);
     stack->addWidget(drawPage);
 
     connect(brightnessSlider, &QSlider::valueChanged, this, [this](int value) {
@@ -132,6 +192,7 @@ void QVEditPanel::setMode(QVGraphicsView::EditMode mode)
     }
     case QVGraphicsView::EditMode::Draw: {
         stack->setCurrentWidget(drawPage);
+        emit drawSettingsChanged(currentDrawSettings);
         break;
     }
     case QVGraphicsView::EditMode::None:
@@ -153,4 +214,11 @@ void QVEditPanel::updateAdjustLabels()
 {
     brightnessValueLabel->setText(QString::number(brightnessSlider->value()));
     contrastValueLabel->setText(QString::number(contrastSlider->value()));
+}
+
+void QVEditPanel::updateColorButton()
+{
+    colorButton->setStyleSheet(
+            QStringLiteral("QPushButton { border-left: 12px solid %1; }")
+                    .arg(currentDrawSettings.color.name()));
 }

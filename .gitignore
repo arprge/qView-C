@@ -49,3 +49,5 @@ build/*
 
 *.qm
 .qm
+
+.PLAN.md

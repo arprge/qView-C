@@ -17,6 +17,9 @@
 #include <QSaveFile>
 #include <QImageWriter>
 #include <QtMath>
+#include <QtConcurrent/QtConcurrentRun>
+#include <QThread>
+#include <QFuture>
 
 namespace {
 
@@ -696,13 +699,17 @@ QPixmap QVImageCore::matchCurrentRotation(const QPixmap &pixmapToRotate)
     return QPixmap::fromImage(matchCurrentRotation(pixmapToRotate.toImage()));
 }
 
+QRect QVImageCore::clampCropRect(const QRect &pixelRect, const QSize &imageSize)
+{
+    return pixelRect.normalized().intersected(QRect(QPoint(0, 0), imageSize));
+}
+
 void QVImageCore::cropImage(const QRect &pixelRect)
 {
     if (!currentFileDetails.isPixmapLoaded || currentFileDetails.isMovieLoaded)
         return;
 
-    const QRect boundedRect =
-            pixelRect.intersected(QRect(QPoint(0, 0), loadedPixmap.size()));
+    const QRect boundedRect = clampCropRect(pixelRect, loadedPixmap.size());
     if (boundedRect.isEmpty())
         return;
 
@@ -732,24 +739,46 @@ QImage QVImageCore::applyBrightnessContrast(const QImage &source, int brightness
         return source;
 
     const bool wasPremultiplied = source.format() == QImage::Format_ARGB32_Premultiplied;
+    const bool opaque = !source.hasAlphaChannel();
 
-    QImage result = source.convertToFormat(QImage::Format_ARGB32);
+    // Opaque images need no (un)premultiplication; keep RGB32 as-is.
+    QImage result = source.convertToFormat(opaque ? QImage::Format_RGB32 : QImage::Format_ARGB32);
 
     const int offset = qRound(brightness * 2.55);
     const qreal contrastValue = qBound(-255.0, contrast * 2.55, 255.0);
     const qreal factor = (259.0 * (contrastValue + 255.0)) / (255.0 * (259.0 - contrastValue));
 
-    int lut[256];
+    uchar lut[256];
     for (int i = 0; i < 256; i++)
-        lut[i] = qBound(0, qRound(((i - 128) * factor) + 128 + offset), 255);
+        lut[i] = uchar(qBound(0, qRound(((i - 128) * factor) + 128 + offset), 255));
 
-    for (int y = 0; y < result.height(); y++) {
-        auto *line = reinterpret_cast<QRgb *>(result.scanLine(y));
-        for (int x = 0; x < result.width(); x++) {
-            const QRgb pixel = line[x];
-            line[x] = qRgba(lut[qRed(pixel)], lut[qGreen(pixel)], lut[qBlue(pixel)],
-                            qAlpha(pixel));
+    const int width = result.width();
+    const int height = result.height();
+    const auto processRows = [&result, &lut, width](int firstRow, int lastRow) {
+        for (int y = firstRow; y < lastRow; y++) {
+            auto *line = reinterpret_cast<QRgb *>(result.scanLine(y));
+            for (int x = 0; x < width; x++) {
+                const QRgb pixel = line[x];
+                line[x] = (pixel & 0xFF000000u) | (QRgb(lut[qRed(pixel)]) << 16)
+                        | (QRgb(lut[qGreen(pixel)]) << 8) | QRgb(lut[qBlue(pixel)]);
+            }
         }
+    };
+
+    // Each thread works on distinct scanlines, so large images can be split safely.
+    constexpr qint64 PARALLEL_PIXEL_THRESHOLD = 1000000;
+    const int threadCount = qMin(QThread::idealThreadCount(), height);
+    if (qint64(width) * height < PARALLEL_PIXEL_THRESHOLD || threadCount < 2) {
+        processRows(0, height);
+    } else {
+        // Detach before sharing the buffer across threads
+        result.detach();
+        QList<QFuture<void>> futures;
+        const int chunk = (height + threadCount - 1) / threadCount;
+        for (int first = 0; first < height; first += chunk)
+            futures.append(QtConcurrent::run(processRows, first, qMin(first + chunk, height)));
+        for (auto &future : futures)
+            future.waitForFinished();
     }
 
     if (wasPremultiplied)
@@ -825,6 +854,8 @@ void QVImageCore::markCurrentFileSaved()
     // The saved pixels already contain the current rotation. Reset it so a
     // reload does not rotate the image a second time.
     currentRotation = 0;
+    // Size/date sorting may have changed with the new file contents
+    updateFolderInfo();
 }
 
 QPixmap QVImageCore::scaleExpensively(const int desiredWidth, const int desiredHeight)

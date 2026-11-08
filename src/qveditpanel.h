@@ -8,6 +8,7 @@
 class QLabel;
 class QPushButton;
 class QSlider;
+class QSpinBox;
 class QStackedWidget;
 
 class QVEditPanel : public QWidget
@@ -22,11 +23,16 @@ public:
     int brightness() const;
     int contrast() const;
 
+    QVGraphicsView::DrawSettings drawSettings() const { return currentDrawSettings; }
+
 signals:
     void brightnessContrastChanged(int brightness, int contrast);
+    void drawSettingsChanged(const QVGraphicsView::DrawSettings &settings);
+    void undoDrawingRequested();
 
 private:
     void updateAdjustLabels();
+    void updateColorButton();
 
     QStackedWidget *stack;
 
@@ -39,6 +45,9 @@ private:
     QLabel *brightnessValueLabel;
     QLabel *contrastValueLabel;
     QPushButton *resetButton;
+
+    QVGraphicsView::DrawSettings currentDrawSettings;
+    QPushButton *colorButton;
 };
 
 #endif // QVEDITPANEL_H

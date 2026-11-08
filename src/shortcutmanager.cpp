@@ -148,6 +148,8 @@ void ShortcutManager::initializeShortcutsList()
                            "brightnesscontrast",
                            QStringList(QKeySequence(Qt::Key_B).toString()),
                            {} });
+    shortcutsList.append(
+            { tr("Draw"), "draw", QStringList(QKeySequence(Qt::Key_D).toString()), {} });
 
     // Fixes alt+enter only working with numpad enter when using qt's standard keybinds
 #ifdef Q_OS_WIN
