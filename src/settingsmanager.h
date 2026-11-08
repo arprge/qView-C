@@ -28,6 +28,7 @@ public:
         MenuBarEnabled,
         FullScreenDetails,
         CtrlDragWindow,
+        UiScale,
         // Image settings
         FilteringEnabled,
         ScalingEnabled,

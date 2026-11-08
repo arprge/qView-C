@@ -205,7 +205,33 @@ void MainWindow::contextMenuEvent(QContextMenuEvent *event)
     qvApp->getActionManager().loadRecentsList();
     QVCocoaFunctions::showMenu(contextMenu, event->pos(), windowHandle());
 #else
-    contextMenu->popup(event->globalPos());
+    // On Wayland, top-level windows don't know their screen position, so Qt can't tell which side
+    // of the screen has room for nested submenus. Keep the context menu inside the window bounds
+    // (or flip it to the left of the cursor when clicked on the right half of the window) so both
+    // the menu and its submenus have room inside the window.
+    QPoint popupPos = event->globalPos();
+    const QSize menuSize = contextMenu->sizeHint();
+    int maxSubmenuWidth = 0;
+    const auto menuActions = contextMenu->actions();
+    for (QAction *action : menuActions) {
+        if (QMenu *sub = action->menu())
+            maxSubmenuWidth = qMax(maxSubmenuWidth, sub->sizeHint().width());
+    }
+
+    const QRect winRect = rect();
+    const QPoint localPos = event->pos();
+    // If clicking near the right edge where the menu + submenu would overflow the window,
+    // open the context menu to the left of the cursor if there's more room on the left.
+    if (localPos.x() + menuSize.width() + maxSubmenuWidth > winRect.width()
+        && localPos.x() > winRect.width() / 2) {
+        const int shiftedX = qMax(4, localPos.x() - menuSize.width());
+        popupPos.setX(mapToGlobal(QPoint(shiftedX, localPos.y())).x());
+    }
+    if (localPos.y() + menuSize.height() > winRect.height() && localPos.y() > menuSize.height()) {
+        const int shiftedY = qMax(4, winRect.height() - menuSize.height() - 4);
+        popupPos.setY(mapToGlobal(QPoint(localPos.x(), shiftedY)).y());
+    }
+    contextMenu->popup(popupPos);
 #endif
 }
 

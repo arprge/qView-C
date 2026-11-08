@@ -32,6 +32,7 @@ static const SettingDefinition settingDefinitions[] = {
     { SettingsManager::Setting::MenuBarEnabled, false, "menubarenabled" },
     { SettingsManager::Setting::FullScreenDetails, false, "fullscreendetails" },
     { SettingsManager::Setting::CtrlDragWindow, false, "ctrldragwindow" },
+    { SettingsManager::Setting::UiScale, 100, "uiscale" },
     // Image settings
     { SettingsManager::Setting::FilteringEnabled, true, "filteringenabled" },
     { SettingsManager::Setting::ScalingEnabled, true, "scalingenabled" },

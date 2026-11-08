@@ -119,7 +119,8 @@ public:
     // brightness/contrast previews.
     void setPreviewPixmap(const QPixmap &pixmap);
 
-    static QImage applyBrightnessContrast(const QImage &source, int brightness, int contrast);
+    static QImage applyBrightnessContrast(const QImage &source, int brightness, int contrast,
+                                          int saturation = 0, int warmth = 0);
 
     bool saveCopy(const QString &filePath, QString *errorString = nullptr) const;
     bool replaceCurrentFile(QString *errorString = nullptr);

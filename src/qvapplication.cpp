@@ -8,12 +8,88 @@
 #include <QTimer>
 #include <QFileDialog>
 #include <QFontDatabase>
+#include <QProxyStyle>
+#include <QStyleFactory>
+#include <QStyleOption>
+
+namespace {
+
+class QVCompactProxyStyle : public QProxyStyle
+{
+public:
+    explicit QVCompactProxyStyle(qreal scaleFactor, QStyle *baseStyle = nullptr)
+        : QProxyStyle(baseStyle), factor(scaleFactor)
+    {
+    }
+
+    int pixelMetric(PixelMetric metric, const QStyleOption *option,
+                    const QWidget *widget) const override
+    {
+        const int base = QProxyStyle::pixelMetric(metric, option, widget);
+        // Compact factor makes default 100% denser and scales smoothly with UiScale
+        const qreal compact = factor * 0.78;
+        switch (metric) {
+        case PM_SmallIconSize:
+            return qMax(12, qRound(16 * factor));
+        case PM_ButtonIconSize:
+        case PM_ListViewIconSize:
+            return qMax(14, qRound(base * compact));
+        case PM_SubMenuOverlap:
+            return -2;
+        case PM_MenuVMargin:
+        case PM_MenuHMargin:
+        case PM_MenuBarVMargin:
+        case PM_MenuBarHMargin:
+            return qMax(1, qRound(base * 0.5 * factor));
+        case PM_MenuBarItemSpacing:
+        case PM_ToolBarItemSpacing:
+            return qMax(2, qRound(base * 0.65 * factor));
+        case PM_LayoutLeftMargin:
+        case PM_LayoutTopMargin:
+        case PM_LayoutRightMargin:
+        case PM_LayoutBottomMargin:
+        case PM_LayoutHorizontalSpacing:
+        case PM_LayoutVerticalSpacing:
+            return qMax(3, qRound(base * compact));
+        default:
+            return base;
+        }
+    }
+
+    QSize sizeFromContents(ContentsType type, const QStyleOption *option,
+                           const QSize &contentsSize, const QWidget *widget) const override
+    {
+        QSize sz = QProxyStyle::sizeFromContents(type, option, contentsSize, widget);
+        if (type == CT_MenuItem) {
+            if (const auto *menuOpt = qstyleoption_cast<const QStyleOptionMenuItem *>(option)) {
+                if (menuOpt->menuItemType != QStyleOptionMenuItem::Separator) {
+                    const int minHeight = qMax(18, qRound(22 * factor));
+                    sz.setHeight(qMax(minHeight, qRound(sz.height() * 0.80 * factor)));
+                }
+            }
+        } else if (type == CT_PushButton || type == CT_ComboBox || type == CT_SpinBox) {
+            sz.setHeight(qMax(20, qRound(sz.height() * 0.86 * factor)));
+        }
+        return sz;
+    }
+
+private:
+    qreal factor;
+};
+
+} // namespace
 
 QVApplication::QVApplication(int &argc, char **argv) : QApplication(argc, argv)
 {
     setDesktopFileName("com.interversehq.qView.desktop");
 
+    baseStyleName = style()->objectName();
+    baseApplicationFont = font();
+    applyUiScale();
+
     // Connections
+    connect(&settingsManager, &SettingsManager::settingsUpdated, this,
+            &QVApplication::applyUiScale);
     connect(&actionManager, &ActionManager::recentsMenuUpdated, this,
             &QVApplication::recentsMenuUpdated);
 
@@ -40,7 +116,7 @@ QVApplication::QVApplication(int &argc, char **argv) : QApplication(argc, argv)
     setAttribute(Qt::AA_DontShowIconsInMenus);
 #endif
     // Adwaita Qt styles should hide icons for a more consistent look
-    if (style()->objectName() == "adwaita-dark" || style()->objectName() == "adwaita")
+    if (baseStyleName == "adwaita-dark" || baseStyleName == "adwaita")
         setAttribute(Qt::AA_DontShowIconsInMenus);
 
     // Setup macOS dock menu
@@ -379,6 +455,26 @@ void QVApplication::ensureFontLoaded(const QString &path)
 
     QFontDatabase::addApplicationFont(path);
     loadedFontPaths.insert(path);
+}
+
+void QVApplication::applyUiScale()
+{
+    const int uiScale = qBound(50, getSettingsManager().getInt(SettingsManager::Setting::UiScale), 200);
+    const qreal factor = uiScale / 100.0;
+
+    QFont scaledFont = baseApplicationFont;
+    if (uiScale != 100) {
+        if (scaledFont.pointSizeF() > 0) {
+            scaledFont.setPointSizeF(qMax(6.0, scaledFont.pointSizeF() * factor));
+        } else if (scaledFont.pixelSize() > 0) {
+            scaledFont.setPixelSize(qMax(8, qRound(scaledFont.pixelSize() * factor)));
+        }
+    }
+    if (font() != scaledFont)
+        setFont(scaledFont);
+
+    if (!baseStyleName.isEmpty())
+        setStyle(new QVCompactProxyStyle(factor, QStyleFactory::create(baseStyleName)));
 }
 
 QIcon QVApplication::iconFromFont(const QString &fontFamily, const QChar &codePoint, const int pixelSize, const qreal pixelRatio)
