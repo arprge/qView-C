@@ -249,12 +249,17 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
     contentLayout->addWidget(stack);
 
     // -------------------------------------------------------------------------
-    // 1. Crop Page (UX-focused: aspect ratio presets, live W×H readout, Reset)
+    // 1. Crop Page (UX-focused: aspect ratio presets, live W×H readout, Reset,
+    //    and compact shortcut hints at the bottom)
     // -------------------------------------------------------------------------
     cropPage = new QWidget(stack);
-    auto *cropLayout = new QHBoxLayout(cropPage);
+    auto *cropLayout = new QVBoxLayout(cropPage);
     cropLayout->setContentsMargins(0, 0, 0, 0);
-    cropLayout->setSpacing(4);
+    cropLayout->setSpacing(0);
+
+    auto *cropControlsRow = new QHBoxLayout();
+    cropControlsRow->setContentsMargins(0, 0, 0, 0);
+    cropControlsRow->setSpacing(4);
 
     auto *aspectGroup = new QButtonGroup(cropPage);
     const struct
@@ -280,7 +285,7 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
         btn->setChecked(i == 0);
         aspectGroup->addButton(btn);
         aspectButtons.append(btn);
-        cropLayout->addWidget(btn);
+        cropControlsRow->addWidget(btn);
 
         const QSizeF ratio = entry.ratio;
         connect(btn, &QToolButton::clicked, this, [this, ratio]() {
@@ -290,22 +295,14 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
         });
     }
 
-    cropLayout->addWidget(makeVerticalSeparator(cropPage));
+    cropControlsRow->addWidget(makeVerticalSeparator(cropPage));
 
     cropSizeLabel = new QLabel(cropPage);
     cropSizeLabel->setFocusPolicy(Qt::NoFocus);
     cropSizeLabel->setToolTip(tr("Current crop dimensions in pixels"));
-    cropLayout->addWidget(cropSizeLabel);
+    cropControlsRow->addWidget(cropSizeLabel);
 
-    cropLayout->addStretch();
-
-    auto *cropHint = new QLabel(
-            tr("Drag borders to crop, inside to move · Enter: Save copy · Ctrl+Enter: Replace"),
-            cropPage);
-    cropHint->setFocusPolicy(Qt::NoFocus);
-    cropLayout->addWidget(cropHint);
-
-    cropLayout->addStretch();
+    cropControlsRow->addStretch();
 
     cropResetButton = new QPushButton(tr("Reset"), cropPage);
     cropResetButton->setFocusPolicy(Qt::NoFocus);
@@ -316,7 +313,25 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
             aspectButtons.first()->setChecked(true);
         emit resetCropRequested();
     });
-    cropLayout->addWidget(cropResetButton);
+    cropControlsRow->addWidget(cropResetButton);
+    cropLayout->addLayout(cropControlsRow);
+
+    auto *cropHintRow = new QHBoxLayout();
+    cropHintRow->setContentsMargins(0, 0, 0, 0);
+    cropHintRow->setSpacing(0);
+    cropHintRow->addStretch();
+
+    cropHint = new QLabel(
+            tr("Enter: Save copy · Ctrl+Enter: Replace · Esc: Cancel"),
+            cropPage);
+    cropHint->setFocusPolicy(Qt::NoFocus);
+    cropHint->setMargin(0);
+    cropHint->setContentsMargins(0, 0, 0, 0);
+    cropHint->setAlignment(Qt::AlignCenter);
+    cropHintRow->addWidget(cropHint);
+    cropHintRow->addStretch();
+    cropLayout->addLayout(cropHintRow);
+
     stack->addWidget(cropPage);
 
     // -------------------------------------------------------------------------
@@ -568,6 +583,7 @@ QVEditPanel::QVEditPanel(QWidget *parent) : QWidget(parent)
         emit brightnessContrastChanged(0, 0, 0, 0);
     });
 
+    updateCropHintStyle();
     updateAdjustReadoutWidths();
     updateThemeIcons();
     updateColorButtons();
@@ -580,9 +596,11 @@ void QVEditPanel::changeEvent(QEvent *event)
     if (event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange) {
         updateThemeIcons();
         updateColorButtons();
+        updateCropHintStyle();
     } else if (event->type() == QEvent::FontChange
                || event->type() == QEvent::ApplicationFontChange) {
         updateAdjustReadoutWidths();
+        updateCropHintStyle();
     }
     QWidget::changeEvent(event);
 }
@@ -651,6 +669,33 @@ void QVEditPanel::setCropDimensions(const QRect &rect, const QSize &imageSize)
 
     const bool nonFreeRatio = !aspectButtons.isEmpty() && !aspectButtons.first()->isChecked();
     cropResetButton->setEnabled(modified || nonFreeRatio);
+}
+
+void QVEditPanel::updateCropHintStyle()
+{
+    if (!cropHint)
+        return;
+
+    QFont hintFont = font();
+    if (hintFont.pointSizeF() > 0)
+        hintFont.setPointSizeF(hintFont.pointSizeF() * 0.88);
+    else if (hintFont.pixelSize() > 0)
+        hintFont.setPixelSize(qMax(9, hintFont.pixelSize() - 2));
+    else
+        hintFont.setPointSize(qMax(8, hintFont.pointSize() - 1));
+    cropHint->setFont(hintFont);
+    cropHint->setMargin(0);
+    cropHint->setContentsMargins(0, 0, 0, 0);
+    cropHint->setFixedHeight(cropHint->fontMetrics().height());
+
+    QColor hintColor = palette().color(QPalette::PlaceholderText);
+    if (hintColor == palette().color(QPalette::WindowText)) {
+        hintColor = palette().color(QPalette::WindowText);
+        hintColor.setAlpha(170);
+    }
+    QPalette pal = cropHint->palette();
+    pal.setColor(QPalette::WindowText, hintColor);
+    cropHint->setPalette(pal);
 }
 
 void QVEditPanel::setDrawHistoryCount(int count)
