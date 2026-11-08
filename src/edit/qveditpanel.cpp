@@ -711,7 +711,7 @@ void QVEditPanel::resetAdjustSliders()
 void QVEditPanel::emitAdjustChanged()
 {
     updateAdjustLabels();
-    emit brightnessContrastChanged(brightness(), contrast(), saturation(), warmth());
+    emit adjustmentsChanged(brightness(), contrast(), saturation(), warmth());
 }
 
 void QVEditPanel::updateCropHintStyle()

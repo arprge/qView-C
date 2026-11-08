@@ -24,10 +24,10 @@ public:
 private slots:
     void testClonedActionsUntracked();
     void testEditActionsRegistered();
-    void testBrightnessContrastLut();
-    void testBrightnessContrastPremultiplied();
-    void testBrightnessContrastOpaque();
-    void testBrightnessContrastLargeImage();
+    void testAdjustmentsLut();
+    void testAdjustmentsPremultiplied();
+    void testAdjustmentsOpaque();
+    void testAdjustmentsLargeImage();
     void testClampCropRect();
     void testEditPanelCropBehavior();
     void testEditPanelAdjustBehavior();
@@ -117,7 +117,7 @@ void ActionManagerTests::testEditActionsRegistered()
     QVERIFY(!brightnessContrastAction->isEnabled());
 }
 
-void ActionManagerTests::testBrightnessContrastLut()
+void ActionManagerTests::testAdjustmentsLut()
 {
     QImage image(2, 2, QImage::Format_ARGB32);
     image.setPixel(0, 0, qRgba(10, 20, 30, 40));
@@ -125,11 +125,11 @@ void ActionManagerTests::testBrightnessContrastLut()
     image.setPixel(0, 1, qRgba(250, 250, 250, 128));
     image.setPixel(1, 1, qRgba(0, 0, 0, 0));
 
-    const QImage unchanged = QVImageCore::applyBrightnessContrast(image, 0, 0);
+    const QImage unchanged = QVImageCore::applyAdjustments(image, 0, 0);
     QCOMPARE(unchanged.pixel(0, 0), image.pixel(0, 0));
     QCOMPARE(unchanged.pixel(1, 1), image.pixel(1, 1));
 
-    const QImage brighter = QVImageCore::applyBrightnessContrast(image, 100, 0);
+    const QImage brighter = QVImageCore::applyAdjustments(image, 100, 0);
     QVERIFY(qRed(brighter.pixel(0, 0)) > 10);
     QVERIFY(qGreen(brighter.pixel(0, 0)) > 20);
     QVERIFY(qBlue(brighter.pixel(0, 0)) > 30);
@@ -137,54 +137,54 @@ void ActionManagerTests::testBrightnessContrastLut()
     QCOMPARE(qRed(brighter.pixel(0, 1)), 255);
     QCOMPARE(qAlpha(brighter.pixel(0, 0)), 40);
 
-    const QImage darker = QVImageCore::applyBrightnessContrast(image, -100, 0);
+    const QImage darker = QVImageCore::applyAdjustments(image, -100, 0);
     QCOMPARE(qRed(darker.pixel(0, 0)), 0);
     QVERIFY(qRed(darker.pixel(1, 0)) < 128);
     QVERIFY(qRed(darker.pixel(0, 1)) < 250);
     QCOMPARE(qAlpha(darker.pixel(0, 0)), 40);
 
-    const QImage contrasted = QVImageCore::applyBrightnessContrast(image, 0, 50);
+    const QImage contrasted = QVImageCore::applyAdjustments(image, 0, 50);
     QCOMPARE(qRed(contrasted.pixel(1, 0)), 128);
     QVERIFY(qRed(contrasted.pixel(0, 1)) > 250);
     QCOMPARE(qAlpha(contrasted.pixel(0, 0)), 40);
 
     // Saturation: -100 desaturates to grayscale (R == G == B), +100 boosts chroma
-    const QImage gray = QVImageCore::applyBrightnessContrast(image, 0, 0, -100, 0);
+    const QImage gray = QVImageCore::applyAdjustments(image, 0, 0, -100, 0);
     QCOMPARE(qRed(gray.pixel(0, 0)), qGreen(gray.pixel(0, 0)));
     QCOMPARE(qGreen(gray.pixel(0, 0)), qBlue(gray.pixel(0, 0)));
     QCOMPARE(qAlpha(gray.pixel(0, 0)), 40);
 
     // Warmth: positive warmth boosts red and lowers blue
-    const QImage warm = QVImageCore::applyBrightnessContrast(image, 0, 0, 0, 50);
+    const QImage warm = QVImageCore::applyAdjustments(image, 0, 0, 0, 50);
     QVERIFY(qRed(warm.pixel(1, 0)) > 128);
     QVERIFY(qBlue(warm.pixel(1, 0)) < 128);
 }
 
-void ActionManagerTests::testBrightnessContrastPremultiplied()
+void ActionManagerTests::testAdjustmentsPremultiplied()
 {
     QImage image(1, 1, QImage::Format_ARGB32_Premultiplied);
     image.setPixel(0, 0, qPremultiply(qRgba(100, 100, 100, 128)));
 
-    const QImage result = QVImageCore::applyBrightnessContrast(image, 20, 0);
+    const QImage result = QVImageCore::applyAdjustments(image, 20, 0);
     QCOMPARE(result.format(), QImage::Format_ARGB32_Premultiplied);
     const QRgb pixel = qUnpremultiply(result.pixel(0, 0));
     QVERIFY(qRed(pixel) > 100);
     QCOMPARE(qAlpha(pixel), 128);
 }
 
-void ActionManagerTests::testBrightnessContrastOpaque()
+void ActionManagerTests::testAdjustmentsOpaque()
 {
     QImage image(1, 1, QImage::Format_RGB32);
     image.setPixel(0, 0, qRgb(60, 128, 200));
 
-    const QImage result = QVImageCore::applyBrightnessContrast(image, 0, 100);
+    const QImage result = QVImageCore::applyAdjustments(image, 0, 100);
     QCOMPARE(qAlpha(result.pixel(0, 0)), 255);
     QVERIFY(qRed(result.pixel(0, 0)) < 60);
     QCOMPARE(qGreen(result.pixel(0, 0)), 128);
     QVERIFY(qBlue(result.pixel(0, 0)) > 200);
 }
 
-void ActionManagerTests::testBrightnessContrastLargeImage()
+void ActionManagerTests::testAdjustmentsLargeImage()
 {
     // Large enough to take the multithreaded path
     QImage image(1500, 1000, QImage::Format_ARGB32);
@@ -192,10 +192,10 @@ void ActionManagerTests::testBrightnessContrastLargeImage()
     image.setPixel(1499, 999, qRgba(0, 0, 0, 10));
 
     const QImage singleThreadRef =
-            QVImageCore::applyBrightnessContrast(image.copy(0, 0, 2, 2), 50, 0);
+            QVImageCore::applyAdjustments(image.copy(0, 0, 2, 2), 50, 0);
     const int expectedMid = qRed(singleThreadRef.pixel(0, 0));
 
-    const QImage result = QVImageCore::applyBrightnessContrast(image, 50, 0);
+    const QImage result = QVImageCore::applyAdjustments(image, 50, 0);
     QVERIFY(expectedMid > 100 && expectedMid < 200);
     QCOMPARE(qRed(result.pixel(0, 0)), expectedMid);
     QCOMPARE(qAlpha(result.pixel(0, 0)), 200);
@@ -271,7 +271,7 @@ void ActionManagerTests::testEditPanelAdjustBehavior()
     QSlider *brightnessSlider = findSliderByToolTip(panel, QStringLiteral("Brightness"));
     QVERIFY(brightnessSlider);
 
-    QSignalSpy adjustSpy(&panel, &QVEditPanel::brightnessContrastChanged);
+    QSignalSpy adjustSpy(&panel, &QVEditPanel::adjustmentsChanged);
     brightnessSlider->setValue(40);
     QCOMPARE(panel.brightness(), 40);
     QVERIFY(compareButton->isEnabled());

@@ -93,8 +93,7 @@ public:
     bool isEditing() const { return editMode != EditMode::None; }
     EditMode getEditMode() const { return editMode; }
 
-    void setBrightnessContrastPreview(int brightness, int contrast, int saturation = 0,
-                                      int warmth = 0);
+    void setAdjustPreview(int brightness, int contrast, int saturation = 0, int warmth = 0);
     void setAdjustCompareOriginal(bool showOriginal);
 
     void setCropAspectRatio(const QSizeF &aspect);
@@ -186,6 +185,12 @@ private:
     void updateFilteringMode();
 
     // Edit session lifecycle
+    void setupEditOverlay();
+    void updateEditEnterCursor();
+    bool handleEditMousePress(QMouseEvent *event);
+    bool handleEditMouseMove(QMouseEvent *event);
+    bool handleEditMouseRelease(QMouseEvent *event);
+    bool handleEditShortcutOverride(QEvent *event);
     void clearEditBuffers();
     void resetEditState();
     bool commitCropEdit();
@@ -193,7 +198,7 @@ private:
     bool commitDrawEdit();
     bool hasPendingAdjustments() const;
     void showPixmap(const QPixmap &pixmap);
-    void applyBrightnessContrastPreview();
+    void applyAdjustPreview();
 
     CropHandles cropHandleAt(const QPointF &scenePos) const;
     void updateCropCursor(CropHandles handle);
@@ -247,7 +252,8 @@ private:
     QRectF cropRect;               // current selection in scene (== image pixel) coordinates
     QRectF cropRectAtDragStart;
     QPointF cropDragStartScene;
-    QSizeF cropAspectRatio;        // (0,0) = Free, (-1,-1) = Original image aspect, (w,h) = fixed
+    // (0,0) = Free, (-1,-1) = Original image aspect, (w,h) = fixed
+    QSizeF cropAspectRatio{ 0.0, 0.0 };
     CropHandles cropDragHandle = CropHandle::None;
     std::array<QGraphicsRectItem *, 8> cropHandleItems{};
     QGraphicsRectItem *cropOutlineItem = nullptr;

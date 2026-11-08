@@ -3,7 +3,6 @@
 #include "qvapplication.h"
 #include "qvcocoafunctions.h"
 #include "qvrenamedialog.h"
-#include "qveditpanel.h"
 
 #include <QFileDialog>
 #include <QMessageBox>
@@ -18,7 +17,6 @@
 #include <QContextMenuEvent>
 #include <QMovie>
 #include <QImageWriter>
-#include <QFileInfo>
 #include <QSettings>
 #include <QStyle>
 #include <QIcon>
@@ -34,39 +32,6 @@
 #include <QNetworkRequest>
 #include <QNetworkReply>
 #include <QTemporaryFile>
-
-namespace {
-
-constexpr int contextMenuEdgeMargin = 4;
-
-QStringList writableImageFilters(QStringList &suffixes)
-{
-    QStringList filters;
-    const QList<QByteArray> supportedFormats = QImageWriter::supportedImageFormats();
-
-    for (const QByteArray &format : supportedFormats) {
-        const QString suffix = QString::fromLatin1(format).toLower();
-        if (suffixes.contains(suffix))
-            continue;
-
-        suffixes << suffix;
-        filters << QStringLiteral("%1 (*.%2)").arg(suffix.toUpper(), suffix);
-    }
-
-    return filters;
-}
-
-QString preferredSaveSuffix(const QFileInfo &sourceFile, const QStringList &writableSuffixes)
-{
-    QString suffix = sourceFile.suffix().toLower();
-    if (suffix == QStringLiteral("jpe"))
-        suffix = QStringLiteral("jpeg");
-    if (!writableSuffixes.contains(suffix))
-        suffix = QStringLiteral("png");
-    return suffix;
-}
-
-} // namespace
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
@@ -91,35 +56,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Hide fullscreen label by default
     ui->fullscreenLabel->hide();
 
-    editPanel = new QVEditPanel(this);
-    editPanel->hide();
-    centralWidget()->layout()->addWidget(editPanel);
+    setupEditPanel();
 
     // Connect graphicsview signals
     connect(graphicsView, &QVGraphicsView::fileChanged, this, &MainWindow::fileChanged);
     connect(graphicsView, &QVGraphicsView::updatedLoadedPixmapItem, this,
             &MainWindow::setWindowSize);
     connect(graphicsView, &QVGraphicsView::cancelSlideshow, this, &MainWindow::cancelSlideshow);
-    connect(graphicsView, &QVGraphicsView::editModeChanged, this, &MainWindow::onEditModeChanged);
-    connect(graphicsView, &QVGraphicsView::commitRequested, this, &MainWindow::onCommitRequested);
-    connect(graphicsView, &QVGraphicsView::cropRectChanged, editPanel,
-            &QVEditPanel::setCropDimensions);
-    connect(editPanel, &QVEditPanel::cropAspectRatioChanged, graphicsView,
-            &QVGraphicsView::setCropAspectRatio);
-    connect(editPanel, &QVEditPanel::resetCropRequested, graphicsView,
-            &QVGraphicsView::resetCropRect);
-    connect(editPanel, &QVEditPanel::drawSettingsChanged, graphicsView,
-            &QVGraphicsView::setDrawSettings);
-    connect(editPanel, &QVEditPanel::undoDrawingRequested, graphicsView,
-            &QVGraphicsView::undoLastDrawing);
-    connect(editPanel, &QVEditPanel::clearDrawingsRequested, graphicsView,
-            &QVGraphicsView::clearDrawings);
-    connect(graphicsView, &QVGraphicsView::drawingCountChanged, editPanel,
-            &QVEditPanel::setDrawHistoryCount);
-    connect(editPanel, &QVEditPanel::brightnessContrastChanged, graphicsView,
-            &QVGraphicsView::setBrightnessContrastPreview);
-    connect(editPanel, &QVEditPanel::compareOriginalChanged, graphicsView,
-            &QVGraphicsView::setAdjustCompareOriginal);
 
     // Initialize escape shortcut
     escShortcut = new QShortcut(Qt::Key_Escape, this);
@@ -250,45 +193,8 @@ void MainWindow::contextMenuEvent(QContextMenuEvent *event)
     qvApp->getActionManager().loadRecentsList();
     QVCocoaFunctions::showMenu(contextMenu, event->pos(), windowHandle());
 #else
-    contextMenu->popup(
-            adjustedContextMenuPosition(contextMenu, event->globalPos(), event->pos()));
+    contextMenu->popup(event->globalPos());
 #endif
-}
-
-QPoint MainWindow::adjustedContextMenuPosition(QMenu *menu, const QPoint &globalPos,
-                                               const QPoint &localPos) const
-{
-    // On Wayland, top-level windows don't know their screen position, so Qt can't tell which side
-    // of the screen has room for nested submenus. Keep the context menu inside the window bounds
-    // (or flip it to the left of the cursor when clicked on the right half of the window) so both
-    // the menu and its submenus have room inside the window.
-    const QSize menuSize = menu->sizeHint();
-    int maxSubmenuWidth = 0;
-    const QList<QAction *> menuActions = menu->actions();
-    for (const QAction *action : menuActions) {
-        if (const QMenu *submenu = action->menu())
-            maxSubmenuWidth = qMax(maxSubmenuWidth, submenu->sizeHint().width());
-    }
-
-    QPoint position = globalPos;
-    const QRect windowRect = rect();
-
-    // If clicking near the right edge where the menu + submenu would overflow the window,
-    // open the context menu to the left of the cursor if there's more room on the left.
-    if (localPos.x() + menuSize.width() + maxSubmenuWidth > windowRect.width()
-        && localPos.x() > windowRect.width() / 2) {
-        const int shiftedX = qMax(contextMenuEdgeMargin, localPos.x() - menuSize.width());
-        position.setX(mapToGlobal(QPoint(shiftedX, localPos.y())).x());
-    }
-
-    if (localPos.y() + menuSize.height() > windowRect.height()
-        && localPos.y() > menuSize.height()) {
-        const int shiftedY = qMax(contextMenuEdgeMargin,
-                                  windowRect.height() - menuSize.height() - contextMenuEdgeMargin);
-        position.setY(mapToGlobal(QPoint(localPos.x(), shiftedY)).y());
-    }
-
-    return position;
 }
 
 void MainWindow::showEvent(QShowEvent *event)
@@ -1128,114 +1034,6 @@ void MainWindow::flip()
 {
     graphicsView->scale(1, -1);
     resetZoom();
-}
-
-void MainWindow::crop()
-{
-    graphicsView->beginEdit(QVGraphicsView::EditMode::Crop);
-}
-
-void MainWindow::brightnessContrast()
-{
-    graphicsView->beginEdit(QVGraphicsView::EditMode::Adjust);
-}
-
-void MainWindow::draw()
-{
-    graphicsView->beginEdit(QVGraphicsView::EditMode::Draw);
-}
-
-void MainWindow::onEditModeChanged(QVGraphicsView::EditMode mode)
-{
-    if (mode == QVGraphicsView::EditMode::None) {
-        editPanel->hide();
-        disableActions();
-        return;
-    }
-
-    editPanel->setMode(mode);
-    editPanel->show();
-
-    const QStringList actionsDisabledWhileEditing = {
-        QStringLiteral("rotateleft"), QStringLiteral("rotateright"), QStringLiteral("mirror"),
-        QStringLiteral("flip")
-    };
-    for (const QString &actionKey : actionsDisabledWhileEditing) {
-        const QList<QAction *> actions =
-                qvApp->getActionManager().getAllInstancesOfAction(actionKey);
-        for (QAction *action : actions)
-            action->setEnabled(false);
-    }
-
-    graphicsView->setFocus();
-}
-
-void MainWindow::onCommitRequested(QVGraphicsView::CommitAction action)
-{
-    if (!graphicsView->applyEdit())
-        return;
-
-    if (action == QVGraphicsView::CommitAction::SaveCopy)
-        saveEditedCopy();
-    else
-        replaceOriginalWithEdit();
-}
-
-void MainWindow::saveEditedCopy()
-{
-    const QFileInfo currentFile = getCurrentFileDetails().fileInfo;
-
-    QStringList writableSuffixes;
-    QStringList filters = writableImageFilters(writableSuffixes);
-    filters << tr("All Files (*)");
-
-    const QString defaultSuffix = preferredSaveSuffix(currentFile, writableSuffixes);
-
-    QSettings settings;
-    settings.beginGroup(QStringLiteral("recents"));
-    const QString lastFileDialogDir =
-            settings.value(QStringLiteral("lastFileDialogDir"), currentFile.absolutePath())
-                    .toString();
-
-    auto *saveDialog = new QFileDialog(this, tr("Save Edited Copy As..."));
-    saveDialog->setAttribute(Qt::WA_DeleteOnClose);
-    saveDialog->setDirectory(lastFileDialogDir);
-    saveDialog->setNameFilters(filters);
-    saveDialog->selectFile(currentFile.completeBaseName() + QStringLiteral("-edited.")
-                           + defaultSuffix);
-    saveDialog->setDefaultSuffix(defaultSuffix);
-    saveDialog->setAcceptMode(QFileDialog::AcceptSave);
-    saveDialog->setFileMode(QFileDialog::AnyFile);
-    saveDialog->open();
-
-    connect(saveDialog, &QFileDialog::fileSelected, this, [this](const QString &fileName) {
-        QString errorString;
-        if (!graphicsView->saveCopy(fileName, &errorString)) {
-            QMessageBox::warning(this, tr("Save Failed"),
-                                 tr("Could not save the image.\n%1").arg(errorString));
-            return;
-        }
-
-        QSettings settings;
-        settings.beginGroup(QStringLiteral("recents"));
-        settings.setValue(QStringLiteral("lastFileDialogDir"),
-                          QFileInfo(fileName).absolutePath());
-    });
-}
-
-void MainWindow::replaceOriginalWithEdit()
-{
-    QString errorString;
-    if (!graphicsView->replaceCurrentFile(&errorString)) {
-        QMessageBox::warning(this, tr("Replace Failed"),
-                             tr("Could not replace the original image.\n%1").arg(errorString));
-        return;
-    }
-
-    graphicsView->markCurrentFileSaved();
-    refreshProperties();
-    updateWindowTitle();
-    updateWindowFilePath();
 }
 
 void MainWindow::firstFile()
