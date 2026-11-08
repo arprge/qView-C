@@ -80,6 +80,7 @@ public:
 
     void setBrightnessContrastPreview(int brightness, int contrast, int saturation = 0,
                                       int warmth = 0);
+    void setAdjustCompareOriginal(bool showOriginal);
 
     void setDrawSettings(const DrawSettings &settings) { drawSettings = settings; }
     const DrawSettings &getDrawSettings() const { return drawSettings; }
@@ -113,6 +114,8 @@ signals:
     void editModeChanged(QVGraphicsView::EditMode mode);
 
     void commitRequested(QVGraphicsView::CommitAction action);
+
+    void drawingCountChanged(int count);
 
 protected:
     void wheelEvent(QWheelEvent *event) override;
@@ -232,6 +235,7 @@ private:
     int pendingContrast = 0;
     int pendingSaturation = 0;
     int pendingWarmth = 0;
+    bool adjustComparingOriginal = false;
 
     // Draw state (annotations live in scene coordinates == image pixels while editing)
     DrawSettings drawSettings;
@@ -242,8 +246,8 @@ private:
     bool isDrawing = false;
 
     void beginDrawing(const QPointF &scenePos);
-    void updateDrawing(const QPointF &scenePos);
-    void finishDrawing(const QPointF &scenePos);
+    void updateDrawing(const QPointF &scenePos, bool constrain = false);
+    void finishDrawing(const QPointF &scenePos, bool constrain = false);
     QPen makeDrawingPen() const;
     QPixmap flattenDrawings() const;
 };

@@ -257,7 +257,7 @@ void QVGraphicsView::mouseMoveEvent(QMouseEvent *event)
     }
 
     if (editMode == EditMode::Draw && isDrawing) {
-        updateDrawing(mapToScene(event->pos()));
+        updateDrawing(mapToScene(event->pos()), event->modifiers().testFlag(Qt::ShiftModifier));
         event->accept();
         return;
     }
@@ -292,7 +292,7 @@ void QVGraphicsView::mouseReleaseEvent(QMouseEvent *event)
     }
 
     if (editMode == EditMode::Draw && event->button() == Qt::LeftButton && isDrawing) {
-        finishDrawing(mapToScene(event->pos()));
+        finishDrawing(mapToScene(event->pos()), event->modifiers().testFlag(Qt::ShiftModifier));
         event->accept();
         return;
     }
@@ -324,6 +324,12 @@ void QVGraphicsView::keyPressEvent(QKeyEvent *event)
             event->accept();
             return;
         }
+
+        if (editMode == EditMode::Draw && event->matches(QKeySequence::Undo)) {
+            undoLastDrawing();
+            event->accept();
+            return;
+        }
     }
 
     QGraphicsView::keyPressEvent(event);
@@ -335,7 +341,8 @@ bool QVGraphicsView::event(QEvent *event)
         auto *keyEvent = static_cast<QKeyEvent *>(event);
         const bool isEnterKey =
                 keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter;
-        if (isEnterKey || keyEvent->key() == Qt::Key_Escape) {
+        if (isEnterKey || keyEvent->key() == Qt::Key_Escape
+            || (editMode == EditMode::Draw && keyEvent->matches(QKeySequence::Undo))) {
             keyEvent->accept();
             return true;
         }
@@ -985,6 +992,7 @@ bool QVGraphicsView::beginEdit(const EditMode &mode)
     pendingContrast = 0;
     pendingSaturation = 0;
     pendingWarmth = 0;
+    adjustComparingOriginal = false;
 
     cropDimItem->hide();
     cropSelectionItem->hide();
@@ -1128,8 +1136,23 @@ void QVGraphicsView::setBrightnessContrastPreview(int brightness, int contrast, 
     pendingContrast = qBound(-100, contrast, 100);
     pendingSaturation = qBound(-100, saturation, 100);
     pendingWarmth = qBound(-100, warmth, 100);
-    if (!adjustPreviewTimer->isActive())
+    if (!adjustComparingOriginal && !adjustPreviewTimer->isActive())
         adjustPreviewTimer->start();
+}
+
+void QVGraphicsView::setAdjustCompareOriginal(bool showOriginal)
+{
+    if (editMode != EditMode::Adjust || editBasePixmap.isNull())
+        return;
+
+    adjustComparingOriginal = showOriginal;
+    if (showOriginal) {
+        adjustPreviewTimer->stop();
+        loadedPixmapItem->setScale(1.0);
+        loadedPixmapItem->setPixmap(editBasePixmap);
+    } else {
+        applyBrightnessContrastPreview();
+    }
 }
 
 void QVGraphicsView::undoLastDrawing()
@@ -1138,6 +1161,7 @@ void QVGraphicsView::undoLastDrawing()
         return;
 
     delete drawingItems.takeLast();
+    emit drawingCountChanged(drawingItems.size());
 }
 
 QPen QVGraphicsView::makeDrawingPen() const
@@ -1193,38 +1217,57 @@ void QVGraphicsView::beginDrawing(const QPointF &scenePos)
     activeDrawingItem = item;
 }
 
-void QVGraphicsView::updateDrawing(const QPointF &scenePos)
+void QVGraphicsView::updateDrawing(const QPointF &scenePos, bool constrain)
 {
     if (!isDrawing || !activeDrawingItem)
         return;
 
+    QPointF targetPos = scenePos;
+    if (constrain && drawSettings.tool != DrawSettings::Tool::Pen) {
+        const QPointF delta = scenePos - drawStartScenePos;
+        if (drawSettings.tool == DrawSettings::Tool::Line) {
+            // Snap line to nearest 45-degree angle
+            const qreal len = qHypot(delta.x(), delta.y());
+            if (len > 0.0) {
+                const qreal angle = qAtan2(delta.y(), delta.x());
+                const qreal snapped = qRound(angle / (M_PI / 4.0)) * (M_PI / 4.0);
+                targetPos = drawStartScenePos + QPointF(len * qCos(snapped), len * qSin(snapped));
+            }
+        } else {
+            // Constrain rectangle/ellipse to square/circle
+            const qreal side = qMax(qAbs(delta.x()), qAbs(delta.y()));
+            targetPos = drawStartScenePos
+                    + QPointF(delta.x() < 0 ? -side : side, delta.y() < 0 ? -side : side);
+        }
+    }
+
     switch (drawSettings.tool) {
     case DrawSettings::Tool::Pen: {
-        activePenPath.lineTo(scenePos);
+        activePenPath.lineTo(targetPos);
         static_cast<QGraphicsPathItem *>(activeDrawingItem)->setPath(activePenPath);
         break;
     }
     case DrawSettings::Tool::Line: {
         static_cast<QGraphicsLineItem *>(activeDrawingItem)
-                ->setLine(QLineF(drawStartScenePos, scenePos));
+                ->setLine(QLineF(drawStartScenePos, targetPos));
         break;
     }
     case DrawSettings::Tool::Rectangle: {
         static_cast<QGraphicsRectItem *>(activeDrawingItem)
-                ->setRect(QRectF(drawStartScenePos, scenePos).normalized());
+                ->setRect(QRectF(drawStartScenePos, targetPos).normalized());
         break;
     }
     case DrawSettings::Tool::Ellipse: {
         static_cast<QGraphicsEllipseItem *>(activeDrawingItem)
-                ->setRect(QRectF(drawStartScenePos, scenePos).normalized());
+                ->setRect(QRectF(drawStartScenePos, targetPos).normalized());
         break;
     }
     }
 }
 
-void QVGraphicsView::finishDrawing(const QPointF &scenePos)
+void QVGraphicsView::finishDrawing(const QPointF &scenePos, bool constrain)
 {
-    updateDrawing(scenePos);
+    updateDrawing(scenePos, constrain);
 
     // Discard degenerate shapes (a plain click); pen clicks stay as dots
     const QPointF delta = scenePos - drawStartScenePos;
@@ -1233,6 +1276,7 @@ void QVGraphicsView::finishDrawing(const QPointF &scenePos)
         delete activeDrawingItem;
     } else if (activeDrawingItem) {
         drawingItems.append(activeDrawingItem);
+        emit drawingCountChanged(drawingItems.size());
     }
 
     activeDrawingItem = nullptr;
@@ -1245,6 +1289,11 @@ QPixmap QVGraphicsView::flattenDrawings() const
     QImage out = imageCore.getLoadedPixmap().toImage();
     if (out.isNull())
         return QPixmap();
+
+    if (out.format() == QImage::Format_Indexed8 || out.format() == QImage::Format_Mono
+        || out.format() == QImage::Format_MonoLSB) {
+        out = out.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    }
 
     // Render only the annotations on top of the already-copied base image
     const bool pixmapWasVisible = loadedPixmapItem->isVisible();
@@ -1269,8 +1318,11 @@ void QVGraphicsView::clearDrawings()
     activeDrawingItem = nullptr;
     activePenPath = QPainterPath();
     isDrawing = false;
+    const bool hadItems = !drawingItems.isEmpty();
     qDeleteAll(drawingItems);
     drawingItems.clear();
+    if (hadItems)
+        emit drawingCountChanged(0);
 }
 
 void QVGraphicsView::resetEditState()
@@ -1282,6 +1334,7 @@ void QVGraphicsView::resetEditState()
     editBasePixmap = QPixmap();
     editBaseImage = QImage();
     editPreviewImage = QImage();
+    adjustComparingOriginal = false;
     loadedPixmapItem->setScale(1.0);
     clearDrawings();
 

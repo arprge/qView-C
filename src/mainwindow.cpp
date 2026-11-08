@@ -73,8 +73,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
             &QVGraphicsView::setDrawSettings);
     connect(editPanel, &QVEditPanel::undoDrawingRequested, graphicsView,
             &QVGraphicsView::undoLastDrawing);
+    connect(editPanel, &QVEditPanel::clearDrawingsRequested, graphicsView,
+            &QVGraphicsView::clearDrawings);
+    connect(graphicsView, &QVGraphicsView::drawingCountChanged, editPanel,
+            &QVEditPanel::setDrawHistoryCount);
     connect(editPanel, &QVEditPanel::brightnessContrastChanged, graphicsView,
             &QVGraphicsView::setBrightnessContrastPreview);
+    connect(editPanel, &QVEditPanel::compareOriginalChanged, graphicsView,
+            &QVGraphicsView::setAdjustCompareOriginal);
 
     // Initialize escape shortcut
     escShortcut = new QShortcut(Qt::Key_Escape, this);
