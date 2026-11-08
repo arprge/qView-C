@@ -174,8 +174,7 @@ private slots:
     void replaceOriginalWithEdit();
 
 private:
-    QPoint adjustedContextMenuPosition(QMenu *menu, const QPoint &globalPos,
-                                       const QPoint &localPos) const;
+    void setupEditPanel();
 
     Ui::MainWindow *ui;
     QVGraphicsView *graphicsView;

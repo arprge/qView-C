@@ -115,12 +115,11 @@ public:
     static QRect clampCropRect(const QRect &pixelRect, const QSize &imageSize);
     void cropImage(const QRect &pixelRect);
 
-    // Update the loaded pixmap without notifying the view. Used for live
-    // brightness/contrast previews.
-    void setPreviewPixmap(const QPixmap &pixmap);
+    // Replaces the in-memory loaded pixmap without emitting updateLoadedPixmapItem
+    void setLoadedPixmap(const QPixmap &pixmap);
 
-    static QImage applyBrightnessContrast(const QImage &source, int brightness, int contrast,
-                                          int saturation = 0, int warmth = 0);
+    static QImage applyAdjustments(const QImage &source, int brightness, int contrast,
+                                   int saturation = 0, int warmth = 0);
 
     bool saveCopy(const QString &filePath, QString *errorString = nullptr) const;
     bool replaceCurrentFile(QString *errorString = nullptr);

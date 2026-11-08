@@ -63,7 +63,10 @@ set(PROJECT_SOURCES
     src/actionmanager.cpp
     src/settingsmanager.cpp
     src/shortcutmanager.cpp
-    src/qveditpanel.cpp
+    src/edit/mainwindowedit.cpp
+    src/edit/qveditpanel.cpp
+    src/edit/qvgraphicsviewedit.cpp
+    src/edit/qvimagecoreedit.cpp
 )
 
 # Header files
@@ -82,7 +85,7 @@ set(PROJECT_HEADERS
     src/actionmanager.h
     src/settingsmanager.h
     src/shortcutmanager.h
-    src/qveditpanel.h
+    src/edit/qveditpanel.h
 )
 
 # UI form files
@@ -140,6 +143,7 @@ if(WIN32)
     list(APPEND PROJECT_RESOURCES "${CMAKE_CURRENT_BINARY_DIR}/qView.rc")
 endif()
 add_executable(${PROJECT_NAME} ${EXECUTABLE_TYPE} ${PROJECT_SOURCES} ${PROJECT_HEADERS} ${PROJECT_FORMS} ${PROJECT_RESOURCES})
+target_include_directories(${PROJECT_NAME} PRIVATE src src/edit)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Gui Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Svg)
 

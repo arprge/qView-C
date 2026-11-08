@@ -37,7 +37,7 @@ public:
 signals:
     void cropAspectRatioChanged(const QSizeF &aspect);
     void resetCropRequested();
-    void brightnessContrastChanged(int brightness, int contrast, int saturation, int warmth);
+    void adjustmentsChanged(int brightness, int contrast, int saturation, int warmth);
     void compareOriginalChanged(bool showOriginal);
     void drawSettingsChanged(const QVGraphicsView::DrawSettings &settings);
     void undoDrawingRequested();

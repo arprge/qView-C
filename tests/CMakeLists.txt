@@ -21,7 +21,10 @@ set(TEST_SOURCES
     ../src/actionmanager.cpp
     ../src/settingsmanager.cpp
     ../src/shortcutmanager.cpp
-    ../src/qveditpanel.cpp
+    ../src/edit/mainwindowedit.cpp
+    ../src/edit/qveditpanel.cpp
+    ../src/edit/qvgraphicsviewedit.cpp
+    ../src/edit/qvimagecoreedit.cpp
 )
 
 # Add platform-specific sources
@@ -48,7 +51,7 @@ endif()
 add_executable(actionmanagertests ${TEST_SOURCES})
 
 # Add include directory for source headers
-target_include_directories(actionmanagertests PRIVATE ../src)
+target_include_directories(actionmanagertests PRIVATE ../src ../src/edit)
 
 # Add Qt resources
 set(TEST_RESOURCES ../resources/resources.qrc)

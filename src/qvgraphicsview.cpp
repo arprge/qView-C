@@ -59,6 +59,8 @@ QVGraphicsView::QVGraphicsView(QWidget *parent) : QGraphicsView(parent)
     loadedPixmapItem = new QGraphicsPixmapItem();
     scene->addItem(loadedPixmapItem);
 
+    setupEditOverlay();
+
     // Connect to settings signal
     connect(&qvApp->getSettingsManager(), &SettingsManager::settingsUpdated, this,
             &QVGraphicsView::settingsUpdated);
@@ -109,11 +111,14 @@ void QVGraphicsView::enterEvent(QEnterEvent *event)
 #endif
 {
     QGraphicsView::enterEvent(event);
-    viewport()->setCursor(Qt::ArrowCursor);
+    updateEditEnterCursor();
 }
 
 void QVGraphicsView::mousePressEvent(QMouseEvent *event)
 {
+    if (handleEditMousePress(event))
+        return;
+
     const auto startWindowMove = [this, event]() {
 #ifdef COCOA_LOADED
         return QVCocoaFunctions::startSystemMove(window());
@@ -170,6 +175,9 @@ void QVGraphicsView::mousePressEvent(QMouseEvent *event)
 
 void QVGraphicsView::mouseMoveEvent(QMouseEvent *event)
 {
+    if (handleEditMouseMove(event))
+        return;
+
     if (mousePressButton == Qt::LeftButton) {
         if (mousePressModifiers.testFlag(Qt::ControlModifier)
             && !event->modifiers().testFlag(Qt::ControlModifier)) {
@@ -189,14 +197,21 @@ void QVGraphicsView::mouseMoveEvent(QMouseEvent *event)
 
 void QVGraphicsView::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (handleEditMouseRelease(event))
+        return;
+
     mousePressButton = Qt::NoButton;
     mousePressModifiers = Qt::NoModifier;
     QGraphicsView::mouseReleaseEvent(event);
-    viewport()->setCursor(Qt::ArrowCursor);
+    if (!isEditing())
+        viewport()->setCursor(Qt::ArrowCursor);
 }
 
 bool QVGraphicsView::event(QEvent *event)
 {
+    if (handleEditShortcutOverride(event))
+        return true;
+
     // this is for touchpad pinch gestures
     if (event->type() == QEvent::Gesture) {
         auto *gestureEvent = static_cast<QGestureEvent *>(event);
@@ -349,6 +364,9 @@ void QVGraphicsView::reloadFile()
 
 void QVGraphicsView::postLoad()
 {
+    if (isEditing())
+        resetEditState();
+
     updateLoadedPixmapItem();
     qvApp->getActionManager().addFileToRecentsList(getCurrentFileDetails().fileInfo);
 
@@ -400,13 +418,16 @@ void QVGraphicsView::zoom(qreal scaleFactor, const QPoint &pos)
         centerOn(loadedPixmapItem);
     }
 
-    if (qvGetSettingBool(ScalingEnabled) && !isOriginalSize) {
+    if (qvGetSettingBool(ScalingEnabled) && !isOriginalSize && !isEditing()) {
         expensiveScaleTimerNew->start();
     }
 }
 
 void QVGraphicsView::scaleExpensively()
 {
+    if (isEditing())
+        return;
+
     // Determine if mirrored or flipped
     bool mirrored = false;
     if (transform().m11() < 0)
@@ -525,7 +546,7 @@ void QVGraphicsView::resetScale()
 
     fitInViewMarginless(loadedPixmapItem);
 
-    if (qvGetSettingBool(ScalingEnabled))
+    if (qvGetSettingBool(ScalingEnabled) && !isEditing())
         expensiveScaleTimerNew->start();
 }
 
