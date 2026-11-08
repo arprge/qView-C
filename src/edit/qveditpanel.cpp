@@ -32,8 +32,8 @@ constexpr qreal iconDevicePixelRatio = 2.0;
 
 constexpr int adjustMinimum = -100;
 constexpr int adjustMaximum = 100;
-constexpr int adjustSingleStep = 2;
-constexpr int adjustPageStep = 10;
+constexpr int adjustSingleStep = 1;
+constexpr int adjustPageStep = 3;
 
 constexpr int defaultDrawWidth = 4;
 constexpr int minimumDrawWidth = 1;
@@ -222,8 +222,12 @@ private:
         const int span = grooveWidth - handleWidth;
         const int positionInGroove = position.x() - grooveLeft - handleWidth / 2;
 
-        return QStyle::sliderValueFromPosition(minimum(), maximum(), positionInGroove,
-                                               qMax(1, span), option.upsideDown);
+        const int val = QStyle::sliderValueFromPosition(minimum(), maximum(), positionInGroove,
+                                                         qMax(1, span), option.upsideDown);
+        // Snap to default value (0) if within 1 unit to avoid skipping 0 due to pixel discretization
+        if (qAbs(val - defaultValue) <= 1)
+            return defaultValue;
+        return val;
     }
 
     int defaultValue = 0;

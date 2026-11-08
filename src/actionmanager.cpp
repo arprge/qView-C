@@ -794,8 +794,7 @@ void ActionManager::initializeActionLibrary()
     actionLibrary.insert("editcrop", cropAction);
 
     auto *brightnessContrastAction = new QAction(
-            QIcon::fromTheme("adjust-brightness", QIcon::fromTheme("contrast")),
-            tr("&Brightness/Contrast..."));
+            QIcon::fromTheme("adjust-brightness", QIcon::fromTheme("contrast")), tr("&Adjust..."));
     brightnessContrastAction->setData({ "stillimagedisable" });
     actionLibrary.insert("brightnesscontrast", brightnessContrastAction);
 
