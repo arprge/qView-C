@@ -83,11 +83,11 @@ public:
 
     void closeImage();
     void jumpToNextFrame();
-    void setPaused(const bool &desiredState);
-    void setSpeed(const int &desiredSpeed);
+    void setPaused(bool desiredState);
+    void setSpeed(int desiredSpeed);
     void rotateImage(int rotation);
 
-    bool beginEdit(const EditMode &mode);
+    bool beginEdit(EditMode mode);
     bool applyEdit();
     void cancelEdit();
     bool isEditing() const { return editMode != EditMode::None; }
