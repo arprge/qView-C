@@ -82,6 +82,9 @@ public:
                                       int warmth = 0);
     void setAdjustCompareOriginal(bool showOriginal);
 
+    void setCropAspectRatio(const QSizeF &aspect);
+    void resetCropRect();
+
     void setDrawSettings(const DrawSettings &settings) { drawSettings = settings; }
     const DrawSettings &getDrawSettings() const { return drawSettings; }
     void undoLastDrawing();
@@ -114,6 +117,8 @@ signals:
     void editModeChanged(QVGraphicsView::EditMode mode);
 
     void commitRequested(QVGraphicsView::CommitAction action);
+
+    void cropRectChanged(const QRect &rect, const QSize &imageSize);
 
     void drawingCountChanged(int count);
 
@@ -177,7 +182,8 @@ private:
     };
     int cropHandleAt(const QPointF &scenePos) const;
     void updateCropCursor(int handle);
-    void dragCropTo(const QPointF &scenePos);
+    void dragCropTo(const QPointF &scenePos, bool constrain = false);
+    qreal effectiveCropAspectRatio(bool constrain = false) const;
     void updateCropOverlay();
     void updateCropDimOverlay(const QRectF &selection);
     QRect cropPixelRect() const;
@@ -218,9 +224,12 @@ private:
     QRectF cropRect;               // current selection in scene (== image pixel) coordinates
     QRectF cropRectAtDragStart;
     QPointF cropDragStartScene;
+    QSizeF cropAspectRatio;        // (0,0) = Free, (-1,-1) = Original image aspect, (w,h) = fixed
     int cropDragHandle = HandleNone;
     QGraphicsRectItem *cropHandleItems[8] = {};
     QGraphicsRectItem *cropOutlineItem = nullptr;
+    QGraphicsPathItem *cropGridItem = nullptr;
+    QGraphicsPathItem *cropGridOutlineItem = nullptr;
     bool cropDragging = false;
     bool hasCropSelection = false;
 

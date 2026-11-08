@@ -186,20 +186,44 @@ void ActionManagerTests::testEditPanelUxBehavior()
     QEvent fontEvent(QEvent::FontChange);
     QApplication::sendEvent(&panel, &fontEvent);
 
+    const auto findButton = [&panel](const QString &text) -> QPushButton * {
+        for (auto *btn : panel.findChildren<QPushButton *>()) {
+            if (btn->text() == text && btn->isVisible())
+                return btn;
+        }
+        return nullptr;
+    };
+
+    // Crop mode: live dimensions readout, aspect ratio presets, and Reset button state
+    panel.setMode(QVGraphicsView::EditMode::Crop);
+    panel.setCropDimensions(QRect(0, 0, 1920, 1080), QSize(1920, 1080));
+    QPushButton *cropResetBtn = findButton("Reset");
+    QVERIFY(cropResetBtn);
+    QVERIFY(!cropResetBtn->isEnabled());
+
+    panel.setCropDimensions(QRect(100, 100, 800, 600), QSize(1920, 1080));
+    QVERIFY(cropResetBtn->isEnabled());
+
+    QSignalSpy ratioSpy(&panel, &QVEditPanel::cropAspectRatioChanged);
+    for (auto *tb : panel.findChildren<QToolButton *>()) {
+        if (tb->text() == "1:1") {
+            tb->click();
+            break;
+        }
+    }
+    QCOMPARE(ratioSpy.count(), 1);
+    QCOMPARE(ratioSpy.at(0).at(0).toSizeF(), QSizeF(1, 1));
+
+    QSignalSpy resetCropSpy(&panel, &QVEditPanel::resetCropRequested);
+    cropResetBtn->click();
+    QCOMPARE(resetCropSpy.count(), 1);
+
     // Adjust mode: Reset and Compare start disabled; modifying a slider enables them
     panel.setMode(QVGraphicsView::EditMode::Adjust);
     QCOMPARE(panel.brightness(), 0);
     QCOMPARE(panel.contrast(), 0);
     QCOMPARE(panel.saturation(), 0);
     QCOMPARE(panel.warmth(), 0);
-
-    const auto findButton = [&panel](const QString &text) -> QPushButton * {
-        for (auto *btn : panel.findChildren<QPushButton *>()) {
-            if (btn->text() == text)
-                return btn;
-        }
-        return nullptr;
-    };
 
     QPushButton *compareBtn = findButton("Compare");
     QPushButton *resetBtn = findButton("Reset");
