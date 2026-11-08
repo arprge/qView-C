@@ -11,6 +11,8 @@
 #include <QNetworkAccessManager>
 #include <QStack>
 
+class QVEditPanel;
+
 namespace Ui {
 class MainWindow;
 }
@@ -91,6 +93,10 @@ public:
 
     void flip();
 
+    void crop();
+
+    void brightnessContrast();
+
     void firstFile();
 
     void previousFile();
@@ -158,9 +164,17 @@ protected slots:
     void settingsUpdated();
     void shortcutsUpdated();
 
+private slots:
+    void onEditModeChanged(QVGraphicsView::EditMode mode);
+    void onCommitRequested(QVGraphicsView::CommitAction action);
+    void saveEditedCopy();
+    void replaceOriginalWithEdit();
+
 private:
     Ui::MainWindow *ui;
     QVGraphicsView *graphicsView;
+
+    QVEditPanel *editPanel;
 
     QMenu *contextMenu;
     QMenu *virtualMenu;

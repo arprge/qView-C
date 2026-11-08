@@ -63,6 +63,7 @@ set(PROJECT_SOURCES
     src/actionmanager.cpp
     src/settingsmanager.cpp
     src/shortcutmanager.cpp
+    src/qveditpanel.cpp
 )
 
 # Header files
@@ -81,6 +82,7 @@ set(PROJECT_HEADERS
     src/actionmanager.h
     src/settingsmanager.h
     src/shortcutmanager.h
+    src/qveditpanel.h
 )
 
 # UI form files

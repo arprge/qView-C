@@ -269,6 +269,9 @@ QMenu *ActionManager::buildToolsMenu(bool addIcon, QWidget *parent)
     if (addIcon)
         toolsMenu->setIcon(QIcon::fromTheme("configure", QIcon::fromTheme("preferences-other")));
 
+    addCloneOfAction(toolsMenu, "editcrop");
+    addCloneOfAction(toolsMenu, "brightnesscontrast");
+    toolsMenu->addSeparator();
     addCloneOfAction(toolsMenu, "saveframeas");
     addCloneOfAction(toolsMenu, "pause");
     addCloneOfAction(toolsMenu, "nextframe");
@@ -615,6 +618,10 @@ void ActionManager::actionTriggered(QAction *triggeredAction, MainWindow *releva
         relevantWindow->lastFile();
     } else if (key == "randomfile") {
         relevantWindow->randomFile();
+    } else if (key == "editcrop") {
+        relevantWindow->crop();
+    } else if (key == "brightnesscontrast") {
+        relevantWindow->brightnessContrast();
     } else if (key == "saveframeas") {
         relevantWindow->saveFrameAs();
     } else if (key == "pause") {
@@ -776,6 +783,18 @@ void ActionManager::initializeActionLibrary()
             new QAction(QIcon::fromTheme("media-playlist-shuffle"), tr("Rando&m File"));
     randomFileAction->setData({ "folderdisable" });
     actionLibrary.insert("randomfile", randomFileAction);
+
+    auto *cropAction =
+            new QAction(QIcon::fromTheme("transform-crop", QIcon::fromTheme("edit-crop")),
+                        tr("&Crop"));
+    cropAction->setData({ "stillimagedisable" });
+    actionLibrary.insert("editcrop", cropAction);
+
+    auto *brightnessContrastAction = new QAction(
+            QIcon::fromTheme("adjust-brightness", QIcon::fromTheme("contrast")),
+            tr("&Brightness/Contrast..."));
+    brightnessContrastAction->setData({ "stillimagedisable" });
+    actionLibrary.insert("brightnesscontrast", brightnessContrastAction);
 
     auto *saveFrameAsAction =
             new QAction(QIcon::fromTheme("document-save-as"), tr("Save Frame &As..."));

@@ -2,6 +2,7 @@
 #define QVIMAGECORE_H
 
 #include <QObject>
+#include <QImage>
 #include <QImageReader>
 #include <QPixmap>
 #include <QMovie>
@@ -109,6 +110,18 @@ public:
     void rotateImage(int rotation);
     QImage matchCurrentRotation(const QImage &imageToRotate);
     QPixmap matchCurrentRotation(const QPixmap &pixmapToRotate);
+
+    void cropImage(const QRect &pixelRect);
+
+    // Update the loaded pixmap without notifying the view. Used for live
+    // brightness/contrast previews.
+    void setPreviewPixmap(const QPixmap &pixmap);
+
+    static QImage applyBrightnessContrast(const QImage &source, int brightness, int contrast);
+
+    bool saveCopy(const QString &filePath, QString *errorString = nullptr) const;
+    bool replaceCurrentFile(QString *errorString = nullptr);
+    void markCurrentFileSaved();
 
     QPixmap scaleExpensively(const int desiredWidth, const int desiredHeight);
     QPixmap scaleExpensively(const QSizeF desiredSize);

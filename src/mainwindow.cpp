@@ -3,6 +3,7 @@
 #include "qvapplication.h"
 #include "qvcocoafunctions.h"
 #include "qvrenamedialog.h"
+#include "qveditpanel.h"
 
 #include <QFileDialog>
 #include <QMessageBox>
@@ -17,6 +18,7 @@
 #include <QContextMenuEvent>
 #include <QMovie>
 #include <QImageWriter>
+#include <QFileInfo>
 #include <QSettings>
 #include <QStyle>
 #include <QIcon>
@@ -56,15 +58,27 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Hide fullscreen label by default
     ui->fullscreenLabel->hide();
 
+    editPanel = new QVEditPanel(this);
+    editPanel->hide();
+    centralWidget()->layout()->addWidget(editPanel);
+
     // Connect graphicsview signals
     connect(graphicsView, &QVGraphicsView::fileChanged, this, &MainWindow::fileChanged);
     connect(graphicsView, &QVGraphicsView::updatedLoadedPixmapItem, this,
             &MainWindow::setWindowSize);
     connect(graphicsView, &QVGraphicsView::cancelSlideshow, this, &MainWindow::cancelSlideshow);
+    connect(graphicsView, &QVGraphicsView::editModeChanged, this, &MainWindow::onEditModeChanged);
+    connect(graphicsView, &QVGraphicsView::commitRequested, this, &MainWindow::onCommitRequested);
+    connect(editPanel, &QVEditPanel::brightnessContrastChanged, graphicsView,
+            &QVGraphicsView::setBrightnessContrastPreview);
 
     // Initialize escape shortcut
     escShortcut = new QShortcut(Qt::Key_Escape, this);
     connect(escShortcut, &QShortcut::activated, this, [this]() {
+        if (graphicsView->isEditing()) {
+            graphicsView->cancelEdit();
+            return;
+        }
         if (windowState().testFlag(Qt::WindowFullScreen))
             toggleFullScreen();
     });
@@ -255,7 +269,7 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
 
 void MainWindow::mouseDoubleClickEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::MouseButton::LeftButton)
+    if (event->button() == Qt::MouseButton::LeftButton && !graphicsView->isEditing())
         toggleFullScreen();
     QMainWindow::mouseDoubleClickEvent(event);
 }
@@ -420,6 +434,9 @@ void MainWindow::disableActions()
                     clone->setEnabled(getCurrentFileDetails().isPixmapLoaded);
                 } else if (cloneData.last() == "gifdisable") {
                     clone->setEnabled(getCurrentFileDetails().isMovieLoaded);
+                } else if (cloneData.last() == "stillimagedisable") {
+                    clone->setEnabled(getCurrentFileDetails().isPixmapLoaded
+                                      && !getCurrentFileDetails().isMovieLoaded);
                 } else if (cloneData.last() == "undodisable") {
                     clone->setEnabled(!lastDeletedFiles.isEmpty()
                                       && !lastDeletedFiles.top().pathInTrash.isEmpty());
@@ -1025,6 +1042,115 @@ void MainWindow::flip()
 {
     graphicsView->scale(1, -1);
     resetZoom();
+}
+
+void MainWindow::crop()
+{
+    graphicsView->beginEdit(QVGraphicsView::EditMode::Crop);
+}
+
+void MainWindow::brightnessContrast()
+{
+    graphicsView->beginEdit(QVGraphicsView::EditMode::Adjust);
+}
+
+void MainWindow::onEditModeChanged(QVGraphicsView::EditMode mode)
+{
+    if (mode == QVGraphicsView::EditMode::None) {
+        editPanel->hide();
+        disableActions();
+        return;
+    }
+
+    editPanel->setMode(mode);
+    editPanel->show();
+
+    const QStringList disabledWhileEditing = { "rotateleft", "rotateright", "mirror", "flip" };
+    for (const auto &key : disabledWhileEditing) {
+        const auto actions = qvApp->getActionManager().getAllInstancesOfAction(key);
+        for (auto *action : actions)
+            action->setEnabled(false);
+    }
+
+    graphicsView->setFocus();
+}
+
+void MainWindow::onCommitRequested(QVGraphicsView::CommitAction action)
+{
+    if (!graphicsView->applyEdit())
+        return;
+
+    if (action == QVGraphicsView::CommitAction::SaveCopy)
+        saveEditedCopy();
+    else
+        replaceOriginalWithEdit();
+}
+
+void MainWindow::saveEditedCopy()
+{
+    const QFileInfo currentFile = getCurrentFileDetails().fileInfo;
+
+    QStringList writableSuffixes;
+    QStringList filters;
+    const auto supportedFormats = QImageWriter::supportedImageFormats();
+    for (const auto &format : supportedFormats) {
+        const QString suffix = QString::fromLatin1(format).toLower();
+        if (writableSuffixes.contains(suffix))
+            continue;
+
+        writableSuffixes << suffix;
+        filters << QStringLiteral("%1 (*.%2)").arg(suffix.toUpper(), suffix);
+    }
+    filters << tr("All Files (*)");
+
+    QString defaultSuffix = currentFile.suffix().toLower();
+    if (defaultSuffix == "jpe")
+        defaultSuffix = "jpeg";
+    if (!writableSuffixes.contains(defaultSuffix))
+        defaultSuffix = "png";
+
+    QSettings settings;
+    settings.beginGroup("recents");
+    const QString lastFileDialogDir =
+            settings.value("lastFileDialogDir", currentFile.absolutePath()).toString();
+
+    auto *saveDialog = new QFileDialog(this, tr("Save Edited Copy As..."));
+    saveDialog->setAttribute(Qt::WA_DeleteOnClose);
+    saveDialog->setDirectory(lastFileDialogDir);
+    saveDialog->setNameFilters(filters);
+    saveDialog->selectFile(currentFile.completeBaseName() + "-edited." + defaultSuffix);
+    saveDialog->setDefaultSuffix(defaultSuffix);
+    saveDialog->setAcceptMode(QFileDialog::AcceptSave);
+    saveDialog->setFileMode(QFileDialog::AnyFile);
+    saveDialog->open();
+
+    connect(saveDialog, &QFileDialog::fileSelected, this, [=](const QString &fileName) {
+        QString errorString;
+        if (!graphicsView->saveCopy(fileName, &errorString)) {
+            QMessageBox::warning(this, tr("Save Failed"),
+                                 tr("Could not save the image.\n%1").arg(errorString));
+            return;
+        }
+
+        QSettings settings;
+        settings.beginGroup("recents");
+        settings.setValue("lastFileDialogDir", QFileInfo(fileName).absolutePath());
+    });
+}
+
+void MainWindow::replaceOriginalWithEdit()
+{
+    QString errorString;
+    if (!graphicsView->replaceCurrentFile(&errorString)) {
+        QMessageBox::warning(this, tr("Replace Failed"),
+                             tr("Could not replace the original image.\n%1").arg(errorString));
+        return;
+    }
+
+    graphicsView->markCurrentFileSaved();
+    refreshProperties();
+    updateWindowTitle();
+    updateWindowFilePath();
 }
 
 void MainWindow::firstFile()

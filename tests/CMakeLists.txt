@@ -21,6 +21,7 @@ set(TEST_SOURCES
     ../src/actionmanager.cpp
     ../src/settingsmanager.cpp
     ../src/shortcutmanager.cpp
+    ../src/qveditpanel.cpp
 )
 
 # Add platform-specific sources

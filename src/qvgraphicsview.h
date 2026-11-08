@@ -9,6 +9,10 @@
 #include <QTimer>
 #include <QFileInfo>
 
+class QGraphicsPathItem;
+class QGraphicsRectItem;
+class QKeyEvent;
+
 class QVGraphicsView : public QGraphicsView
 {
     Q_OBJECT
@@ -21,6 +25,12 @@ public:
 
     enum class GoToFileMode { constant, first, previous, next, last, random };
     Q_ENUM(GoToFileMode)
+
+    enum class EditMode { None, Crop, Adjust, Draw };
+    Q_ENUM(EditMode)
+
+    enum class CommitAction { SaveCopy, ReplaceOriginal };
+    Q_ENUM(CommitAction)
 
     QMimeData *getMimeData() const;
     void loadMimeData(const QMimeData *mimeData);
@@ -50,6 +60,24 @@ public:
     void setSpeed(const int &desiredSpeed);
     void rotateImage(int rotation);
 
+    bool beginEdit(const EditMode &mode);
+    bool applyEdit();
+    void cancelEdit();
+    bool isEditing() const { return editMode != EditMode::None; }
+    EditMode getEditMode() const { return editMode; }
+
+    void setBrightnessContrastPreview(int brightness, int contrast);
+
+    bool saveCopy(const QString &filePath, QString *errorString = nullptr) const
+    {
+        return imageCore.saveCopy(filePath, errorString);
+    }
+    bool replaceCurrentFile(QString *errorString = nullptr)
+    {
+        return imageCore.replaceCurrentFile(errorString);
+    }
+    void markCurrentFileSaved() { imageCore.markCurrentFileSaved(); }
+
     const QVImageCore::FileDetails &getCurrentFileDetails() const
     {
         return imageCore.getCurrentFileDetails();
@@ -63,6 +91,10 @@ signals:
     void fileChanged();
 
     void updatedLoadedPixmapItem();
+
+    void editModeChanged(QVGraphicsView::EditMode mode);
+
+    void commitRequested(QVGraphicsView::CommitAction action);
 
 protected:
     void wheelEvent(QWheelEvent *event) override;
@@ -89,6 +121,8 @@ protected:
 
     void mouseReleaseEvent(QMouseEvent *event) override;
 
+    void keyPressEvent(QKeyEvent *event) override;
+
     bool event(QEvent *event) override;
 
     void fitInViewMarginless(const QRectF &rect);
@@ -109,6 +143,11 @@ private slots:
 
 private:
     void updateFilteringMode();
+    void resetEditState();
+    void applyBrightnessContrastPreview();
+    void updateCropOverlay(const QPoint &currentPos);
+    void updateCropDimOverlay(const QRectF &selection);
+    QRect cropPixelRect() const;
 
     QGraphicsPixmapItem *loadedPixmapItem;
 
@@ -136,5 +175,21 @@ private:
     Qt::MouseButton mousePressButton;
     Qt::KeyboardModifiers mousePressModifiers;
     QPoint mousePressPosition;
+
+    // Edit mode state
+    EditMode editMode = EditMode::None;
+
+    // Crop state
+    QGraphicsPathItem *cropDimItem = nullptr;
+    QGraphicsRectItem *cropSelectionItem = nullptr;
+    QPoint cropDragStart;
+    bool cropDragging = false;
+    bool hasCropSelection = false;
+
+    // Brightness/contrast state
+    QTimer *adjustPreviewTimer = nullptr;
+    QPixmap editBasePixmap;
+    int pendingBrightness = 0;
+    int pendingContrast = 0;
 };
 #endif // QVGRAPHICSVIEW_H

@@ -7,6 +7,12 @@
 #include <QWheelEvent>
 #include <QGraphicsPixmapItem>
 #include <QGraphicsScene>
+#include <QGraphicsPathItem>
+#include <QGraphicsRectItem>
+#include <QKeyEvent>
+#include <QPainterPath>
+#include <QColor>
+#include <QPen>
 #include <QSettings>
 #include <QMessageBox>
 #include <QMovie>
@@ -59,6 +65,28 @@ QVGraphicsView::QVGraphicsView(QWidget *parent) : QGraphicsView(parent)
     loadedPixmapItem = new QGraphicsPixmapItem();
     scene->addItem(loadedPixmapItem);
 
+    cropDimItem = new QGraphicsPathItem();
+    cropDimItem->setBrush(QColor(0, 0, 0, 110));
+    cropDimItem->setPen(Qt::NoPen);
+    cropDimItem->setZValue(10);
+    cropDimItem->setAcceptedMouseButtons(Qt::NoButton);
+    cropDimItem->hide();
+    scene->addItem(cropDimItem);
+
+    cropSelectionItem = new QGraphicsRectItem();
+    cropSelectionItem->setBrush(Qt::NoBrush);
+    cropSelectionItem->setPen(QPen(QColor(255, 255, 255, 230), 0, Qt::DashLine));
+    cropSelectionItem->setZValue(11);
+    cropSelectionItem->setAcceptedMouseButtons(Qt::NoButton);
+    cropSelectionItem->hide();
+    scene->addItem(cropSelectionItem);
+
+    adjustPreviewTimer = new QTimer(this);
+    adjustPreviewTimer->setSingleShot(true);
+    adjustPreviewTimer->setInterval(40);
+    connect(adjustPreviewTimer, &QTimer::timeout, this,
+            &QVGraphicsView::applyBrightnessContrastPreview);
+
     // Connect to settings signal
     connect(&qvApp->getSettingsManager(), &SettingsManager::settingsUpdated, this,
             &QVGraphicsView::settingsUpdated);
@@ -109,11 +137,24 @@ void QVGraphicsView::enterEvent(QEnterEvent *event)
 #endif
 {
     QGraphicsView::enterEvent(event);
-    viewport()->setCursor(Qt::ArrowCursor);
+    if (editMode == EditMode::Crop || editMode == EditMode::Draw)
+        viewport()->setCursor(Qt::CrossCursor);
+    else
+        viewport()->setCursor(Qt::ArrowCursor);
 }
 
 void QVGraphicsView::mousePressEvent(QMouseEvent *event)
 {
+    if (editMode == EditMode::Crop && event->button() == Qt::LeftButton) {
+        cropDragStart = event->pos();
+        cropDragging = true;
+        hasCropSelection = false;
+        cropSelectionItem->hide();
+        cropDimItem->hide();
+        event->accept();
+        return;
+    }
+
     const auto startWindowMove = [this, event]() {
 #ifdef COCOA_LOADED
         return QVCocoaFunctions::startSystemMove(window());
@@ -170,6 +211,12 @@ void QVGraphicsView::mousePressEvent(QMouseEvent *event)
 
 void QVGraphicsView::mouseMoveEvent(QMouseEvent *event)
 {
+    if (editMode == EditMode::Crop && cropDragging) {
+        updateCropOverlay(event->pos());
+        event->accept();
+        return;
+    }
+
     if (mousePressButton == Qt::LeftButton) {
         if (mousePressModifiers.testFlag(Qt::ControlModifier)
             && !event->modifiers().testFlag(Qt::ControlModifier)) {
@@ -189,14 +236,72 @@ void QVGraphicsView::mouseMoveEvent(QMouseEvent *event)
 
 void QVGraphicsView::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (editMode == EditMode::Crop && event->button() == Qt::LeftButton && cropDragging) {
+        cropDragging = false;
+
+        const QRect viewRect = QRect(cropDragStart, event->pos()).normalized();
+        const QRectF sceneRect = QRectF(mapToScene(viewRect).boundingRect())
+                                         .intersected(loadedPixmapItem->boundingRect());
+
+        if (viewRect.width() >= 2 && viewRect.height() >= 2 && !sceneRect.isEmpty()) {
+            hasCropSelection = true;
+            cropSelectionItem->setRect(sceneRect);
+            cropSelectionItem->show();
+            updateCropDimOverlay(sceneRect);
+        } else {
+            hasCropSelection = false;
+            cropSelectionItem->hide();
+            cropDimItem->hide();
+        }
+
+        event->accept();
+        return;
+    }
+
     mousePressButton = Qt::NoButton;
     mousePressModifiers = Qt::NoModifier;
     QGraphicsView::mouseReleaseEvent(event);
-    viewport()->setCursor(Qt::ArrowCursor);
+    if (!isEditing())
+        viewport()->setCursor(Qt::ArrowCursor);
+}
+
+void QVGraphicsView::keyPressEvent(QKeyEvent *event)
+{
+    if (isEditing()) {
+        const bool isEnterKey = event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter;
+
+        if (isEnterKey) {
+            if (event->modifiers().testFlag(Qt::ControlModifier))
+                emit commitRequested(CommitAction::ReplaceOriginal);
+            else
+                emit commitRequested(CommitAction::SaveCopy);
+
+            event->accept();
+            return;
+        }
+
+        if (event->key() == Qt::Key_Escape) {
+            cancelEdit();
+            event->accept();
+            return;
+        }
+    }
+
+    QGraphicsView::keyPressEvent(event);
 }
 
 bool QVGraphicsView::event(QEvent *event)
 {
+    if (event->type() == QEvent::ShortcutOverride && isEditing()) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        const bool isEnterKey =
+                keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter;
+        if (isEnterKey || keyEvent->key() == Qt::Key_Escape) {
+            keyEvent->accept();
+            return true;
+        }
+    }
+
     // this is for touchpad pinch gestures
     if (event->type() == QEvent::Gesture) {
         auto *gestureEvent = static_cast<QGestureEvent *>(event);
@@ -349,6 +454,9 @@ void QVGraphicsView::reloadFile()
 
 void QVGraphicsView::postLoad()
 {
+    if (isEditing())
+        resetEditState();
+
     updateLoadedPixmapItem();
     qvApp->getActionManager().addFileToRecentsList(getCurrentFileDetails().fileInfo);
 
@@ -400,13 +508,16 @@ void QVGraphicsView::zoom(qreal scaleFactor, const QPoint &pos)
         centerOn(loadedPixmapItem);
     }
 
-    if (qvGetSettingBool(ScalingEnabled) && !isOriginalSize) {
+    if (qvGetSettingBool(ScalingEnabled) && !isOriginalSize && !isEditing()) {
         expensiveScaleTimerNew->start();
     }
 }
 
 void QVGraphicsView::scaleExpensively()
 {
+    if (isEditing())
+        return;
+
     // Determine if mirrored or flipped
     bool mirrored = false;
     if (transform().m11() < 0)
@@ -525,7 +636,7 @@ void QVGraphicsView::resetScale()
 
     fitInViewMarginless(loadedPixmapItem);
 
-    if (qvGetSettingBool(ScalingEnabled))
+    if (qvGetSettingBool(ScalingEnabled) && !isEditing())
         expensiveScaleTimerNew->start();
 }
 
@@ -809,4 +920,199 @@ void QVGraphicsView::setSpeed(const int &desiredSpeed)
 void QVGraphicsView::rotateImage(int rotation)
 {
     imageCore.rotateImage(rotation);
+}
+
+bool QVGraphicsView::beginEdit(const EditMode &mode)
+{
+    if (mode == EditMode::None) {
+        cancelEdit();
+        return false;
+    }
+
+    if (!getCurrentFileDetails().isPixmapLoaded || getCurrentFileDetails().isMovieLoaded)
+        return false;
+
+    // Drawing is implemented in a later phase.
+    if (mode == EditMode::Draw)
+        return false;
+
+    if (isEditing())
+        cancelEdit();
+
+    makeUnscaled();
+    isOriginalSize = false;
+
+    adjustPreviewTimer->stop();
+    editBasePixmap = QPixmap();
+    pendingBrightness = 0;
+    pendingContrast = 0;
+
+    cropDimItem->hide();
+    cropSelectionItem->hide();
+    cropDragging = false;
+    hasCropSelection = false;
+
+    mousePressButton = Qt::NoButton;
+    mousePressModifiers = Qt::NoModifier;
+
+    editMode = mode;
+
+    switch (editMode) {
+    case EditMode::Crop: {
+        setDragMode(QGraphicsView::NoDrag);
+        viewport()->setCursor(Qt::CrossCursor);
+        break;
+    }
+    case EditMode::Adjust: {
+        editBasePixmap = imageCore.getLoadedPixmap();
+        loadedPixmapItem->setPixmap(editBasePixmap);
+        scaledSize = loadedPixmapItem->boundingRect().size().toSize();
+        setDragMode(QGraphicsView::ScrollHandDrag);
+        viewport()->setCursor(Qt::ArrowCursor);
+        break;
+    }
+    default:
+        break;
+    }
+
+    emit editModeChanged(editMode);
+    return true;
+}
+
+bool QVGraphicsView::applyEdit()
+{
+    if (!isEditing())
+        return false;
+
+    bool committed = false;
+
+    if (editMode == EditMode::Crop) {
+        if (!hasCropSelection)
+            return false;
+
+        const QRect pixelRect = cropPixelRect();
+        if (pixelRect.width() < 1 || pixelRect.height() < 1)
+            return false;
+
+        cropDimItem->hide();
+        cropSelectionItem->hide();
+        imageCore.cropImage(pixelRect);
+        committed = true;
+    } else if (editMode == EditMode::Adjust) {
+        if (adjustPreviewTimer->isActive()) {
+            adjustPreviewTimer->stop();
+            applyBrightnessContrastPreview();
+        }
+
+        // The preview is already stored in imageCore, so there is nothing
+        // further to commit.
+        committed = true;
+    }
+
+    resetEditState();
+
+    if (committed && qvGetSettingBool(ScalingEnabled) && !isOriginalSize)
+        expensiveScaleTimerNew->start();
+
+    return committed;
+}
+
+void QVGraphicsView::cancelEdit()
+{
+    if (!isEditing())
+        return;
+
+    if (editMode == EditMode::Adjust && !editBasePixmap.isNull()) {
+        imageCore.setPreviewPixmap(editBasePixmap);
+        loadedPixmapItem->setPixmap(editBasePixmap);
+        scaledSize = loadedPixmapItem->boundingRect().size().toSize();
+    }
+
+    resetEditState();
+
+    if (qvGetSettingBool(ScalingEnabled) && !isOriginalSize)
+        expensiveScaleTimerNew->start();
+}
+
+void QVGraphicsView::setBrightnessContrastPreview(int brightness, int contrast)
+{
+    if (editMode != EditMode::Adjust)
+        return;
+
+    pendingBrightness = qBound(-100, brightness, 100);
+    pendingContrast = qBound(-100, contrast, 100);
+    adjustPreviewTimer->start();
+}
+
+void QVGraphicsView::resetEditState()
+{
+    if (!isEditing())
+        return;
+
+    adjustPreviewTimer->stop();
+    editBasePixmap = QPixmap();
+
+    cropDragging = false;
+    hasCropSelection = false;
+    cropDimItem->hide();
+    cropSelectionItem->hide();
+
+    editMode = EditMode::None;
+    setDragMode(QGraphicsView::ScrollHandDrag);
+    viewport()->setCursor(Qt::ArrowCursor);
+
+    emit editModeChanged(EditMode::None);
+}
+
+void QVGraphicsView::applyBrightnessContrastPreview()
+{
+    if (editMode != EditMode::Adjust || editBasePixmap.isNull())
+        return;
+
+    const QPixmap preview = QPixmap::fromImage(QVImageCore::applyBrightnessContrast(
+            editBasePixmap.toImage(), pendingBrightness, pendingContrast));
+
+    imageCore.setPreviewPixmap(preview);
+    loadedPixmapItem->setPixmap(preview);
+    scaledSize = loadedPixmapItem->boundingRect().size().toSize();
+}
+
+void QVGraphicsView::updateCropOverlay(const QPoint &currentPos)
+{
+    const QRect viewRect = QRect(cropDragStart, currentPos).normalized();
+    const QRectF sceneRect = QRectF(mapToScene(viewRect).boundingRect())
+                                     .intersected(loadedPixmapItem->boundingRect());
+
+    if (viewRect.width() < 2 || viewRect.height() < 2 || sceneRect.isEmpty()) {
+        cropSelectionItem->hide();
+        cropDimItem->hide();
+        return;
+    }
+
+    cropSelectionItem->setRect(sceneRect);
+    cropSelectionItem->show();
+    updateCropDimOverlay(sceneRect);
+}
+
+void QVGraphicsView::updateCropDimOverlay(const QRectF &selection)
+{
+    QPainterPath path;
+    path.setFillRule(Qt::OddEvenFill);
+    path.addRect(loadedPixmapItem->boundingRect());
+    path.addRect(selection);
+
+    cropDimItem->setPath(path);
+    cropDimItem->show();
+}
+
+QRect QVGraphicsView::cropPixelRect() const
+{
+    if (!cropSelectionItem->isVisible())
+        return {};
+
+    const QRect imageRect = loadedPixmapItem->boundingRect().toAlignedRect();
+    const QRect selectionRect = cropSelectionItem->rect().toAlignedRect();
+
+    return selectionRect.intersected(imageRect)
+            .intersected(QRect(QPoint(0, 0), getLoadedPixmap().size()));
 }

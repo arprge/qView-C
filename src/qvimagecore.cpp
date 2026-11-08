@@ -14,6 +14,21 @@
 #include <QIcon>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QSaveFile>
+#include <QImageWriter>
+#include <QtMath>
+
+namespace {
+
+QByteArray imageFormatForPath(const QString &filePath)
+{
+    QString suffix = QFileInfo(filePath).suffix().toLower();
+    if (suffix == "jpg" || suffix == "jpe" || suffix == "jfif")
+        suffix = "jpeg";
+    return suffix.toUtf8();
+}
+
+}
 
 QCache<QString, QVImageCore::ReadData> QVImageCore::imageCache;
 
@@ -679,6 +694,137 @@ QPixmap QVImageCore::matchCurrentRotation(const QPixmap &pixmapToRotate)
         return pixmapToRotate;
 
     return QPixmap::fromImage(matchCurrentRotation(pixmapToRotate.toImage()));
+}
+
+void QVImageCore::cropImage(const QRect &pixelRect)
+{
+    if (!currentFileDetails.isPixmapLoaded || currentFileDetails.isMovieLoaded)
+        return;
+
+    const QRect boundedRect =
+            pixelRect.intersected(QRect(QPoint(0, 0), loadedPixmap.size()));
+    if (boundedRect.isEmpty())
+        return;
+
+    loadedPixmap = loadedPixmap.copy(boundedRect);
+    currentFileDetails.loadedPixmapSize = loadedPixmap.size();
+    emit updateLoadedPixmapItem();
+}
+
+void QVImageCore::setPreviewPixmap(const QPixmap &pixmap)
+{
+    if (pixmap.isNull())
+        return;
+
+    loadedPixmap = pixmap;
+    currentFileDetails.loadedPixmapSize = loadedPixmap.size();
+}
+
+QImage QVImageCore::applyBrightnessContrast(const QImage &source, int brightness, int contrast)
+{
+    if (source.isNull())
+        return source;
+
+    brightness = qBound(-100, brightness, 100);
+    contrast = qBound(-100, contrast, 100);
+
+    if (brightness == 0 && contrast == 0)
+        return source;
+
+    const bool wasPremultiplied = source.format() == QImage::Format_ARGB32_Premultiplied;
+
+    QImage result = source.convertToFormat(QImage::Format_ARGB32);
+
+    const int offset = qRound(brightness * 2.55);
+    const qreal contrastValue = qBound(-255.0, contrast * 2.55, 255.0);
+    const qreal factor = (259.0 * (contrastValue + 255.0)) / (255.0 * (259.0 - contrastValue));
+
+    int lut[256];
+    for (int i = 0; i < 256; i++)
+        lut[i] = qBound(0, qRound(((i - 128) * factor) + 128 + offset), 255);
+
+    for (int y = 0; y < result.height(); y++) {
+        auto *line = reinterpret_cast<QRgb *>(result.scanLine(y));
+        for (int x = 0; x < result.width(); x++) {
+            const QRgb pixel = line[x];
+            line[x] = qRgba(lut[qRed(pixel)], lut[qGreen(pixel)], lut[qBlue(pixel)],
+                            qAlpha(pixel));
+        }
+    }
+
+    if (wasPremultiplied)
+        result = result.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+
+    return result;
+}
+
+bool QVImageCore::saveCopy(const QString &filePath, QString *errorString) const
+{
+    if (!currentFileDetails.isPixmapLoaded || currentFileDetails.isMovieLoaded) {
+        if (errorString)
+            *errorString = tr("No still image is loaded.");
+        return false;
+    }
+
+    QByteArray format = imageFormatForPath(filePath);
+    if (format.isEmpty())
+        format = "png";
+
+    if (!QImageWriter::supportedImageFormats().contains(format)) {
+        if (errorString)
+            *errorString = tr("The image format is not supported for saving.");
+        return false;
+    }
+
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly)) {
+        if (errorString)
+            *errorString = file.errorString();
+        return false;
+    }
+
+    QImageWriter writer(&file, format);
+    if (!writer.write(loadedPixmap.toImage())) {
+        if (errorString)
+            *errorString = writer.errorString();
+        file.cancelWriting();
+        return false;
+    }
+
+    if (!file.commit()) {
+        if (errorString)
+            *errorString = file.errorString();
+        return false;
+    }
+
+    return true;
+}
+
+bool QVImageCore::replaceCurrentFile(QString *errorString)
+{
+    if (!currentFileDetails.isPixmapLoaded || currentFileDetails.isMovieLoaded) {
+        if (errorString)
+            *errorString = tr("No still image is loaded.");
+        return false;
+    }
+
+    const QString filePath = currentFileDetails.fileInfo.absoluteFilePath();
+    if (filePath.isEmpty()) {
+        if (errorString)
+            *errorString = tr("The current file has no valid path.");
+        return false;
+    }
+
+    return saveCopy(filePath, errorString);
+}
+
+void QVImageCore::markCurrentFileSaved()
+{
+    currentFileDetails.fileInfo.refresh();
+    currentFileDetails.baseImageSize = loadedPixmap.size();
+    // The saved pixels already contain the current rotation. Reset it so a
+    // reload does not rotate the image a second time.
+    currentRotation = 0;
 }
 
 QPixmap QVImageCore::scaleExpensively(const int desiredWidth, const int desiredHeight)
