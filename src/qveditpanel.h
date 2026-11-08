@@ -45,6 +45,7 @@ protected:
     void changeEvent(QEvent *event) override;
 
 private:
+    void updateCropHintStyle();
     void updateAdjustLabels();
     void updateAdjustReadoutWidths();
     void updateThemeIcons();
@@ -58,6 +59,7 @@ private:
 
     QList<QToolButton *> aspectButtons;
     QLabel *cropSizeLabel = nullptr;
+    QLabel *cropHint = nullptr;
     QPushButton *cropResetButton = nullptr;
 
     QSlider *brightnessSlider = nullptr;
