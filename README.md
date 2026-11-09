@@ -2,7 +2,7 @@ Personal fork of qView with very minimal image editing functionality
 
 ------
 
-<h1 align=center>qView</h1>
+<h1 align=center>qView-C</h1>
 
 <p align=center>qView is an image viewer designed with minimalism and usability in mind.</p>
 
@@ -11,7 +11,7 @@ Personal fork of qView with very minimal image editing functionality
 </p>
 
 <p align=center>
-    <img alt="Screenshot" src="https://interversehq.com/qview/assets/img/screenshot3.png">
+   <img width="1907" height="1028" alt="screenshot_2026-11-09_14-47-05" src="https://github.com/user-attachments/assets/437cd2f9-c00e-4713-a2f0-c9cb91e7e8de" />
 </p>
 
 _______
@@ -31,7 +31,7 @@ All fork-specific editing code is isolated in the [`src/edit`](src/edit) directo
 
 ### Other changes 
 
-- **Interface scaling**: Adjust the interface font and widget sizes from 50% to 200% in 5% increments.
+- **Interface scaling**: Adjust the interface font and widget sizes from 50% to 200%
 
 ## License
 
