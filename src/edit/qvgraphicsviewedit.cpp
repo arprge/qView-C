@@ -1,6 +1,5 @@
 #include "qvgraphicsview.h"
 #include "qvapplication.h"
-#include "settingsmanager.h"
 
 #include <array>
 

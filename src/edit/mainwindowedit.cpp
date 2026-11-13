@@ -3,6 +3,7 @@
 #include "qvapplication.h"
 
 #include <QAction>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QImageWriter>
@@ -129,19 +130,22 @@ void MainWindow::saveEditedCopy()
     filters << tr("All Files (*)");
 
     const QString defaultSuffix = preferredSaveSuffix(currentFile, writableSuffixes);
+    const QString defaultFileName =
+            currentFile.completeBaseName() + QStringLiteral("-edited.") + defaultSuffix;
 
-    QSettings settings;
-    settings.beginGroup(QStringLiteral("recents"));
-    const QString lastFileDialogDir =
-            settings.value(QStringLiteral("lastFileDialogDir"), currentFile.absolutePath())
-                    .toString();
+    QString targetDir = currentFile.absolutePath();
+    if (targetDir.isEmpty() || !QDir(targetDir).exists()) {
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("recents"));
+        targetDir = settings.value(QStringLiteral("lastFileDialogDir"), QDir::homePath())
+                            .toString();
+    }
 
     auto *saveDialog = new QFileDialog(this, tr("Save Edited Copy As..."));
     saveDialog->setAttribute(Qt::WA_DeleteOnClose);
-    saveDialog->setDirectory(lastFileDialogDir);
+    saveDialog->setDirectory(targetDir);
     saveDialog->setNameFilters(filters);
-    saveDialog->selectFile(currentFile.completeBaseName() + QStringLiteral("-edited.")
-                           + defaultSuffix);
+    saveDialog->selectFile(QDir(targetDir).filePath(defaultFileName));
     saveDialog->setDefaultSuffix(defaultSuffix);
     saveDialog->setAcceptMode(QFileDialog::AcceptSave);
     saveDialog->setFileMode(QFileDialog::AnyFile);
