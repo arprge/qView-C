@@ -1,46 +1,38 @@
 Name:		qview
-Version:	6.1
-Release:	1
+Version:	7.0
+Release:	1%{?dist}
 Summary:	Practical and minimal image viewer
 
-Group:		Productivity/Graphics/Viewers
 License:	GPL-3.0-or-later
 URL:		https://interversehq.com/qview/
-Source:	    https://github.com/jurplel/qView/releases/download/%{version}/qView-%{version}.tar.gz
+Source0:	%{name}-%{version}.tar.gz
 
-BuildRequires: pkgconfig
-BuildRequires: pkgconfig(Qt5Concurrent) >= 5.9
-BuildRequires: pkgconfig(Qt5Widgets) >= 5.9
-BuildRequires: pkgconfig(Qt5Network) >= 5.9
-BuildRequires: pkgconfig(Qt5X11Extras) >= 5.9
-
+BuildRequires:	cmake >= 3.16
+BuildRequires:	gcc-c++
+BuildRequires:	qt6-qtbase-devel
+BuildRequires:	qt6-qtsvg-devel
+BuildRequires:	qt6-qttools-devel
 
 %description
 qView is a Qt image viewer designed with minimalism and usability in mind.
 
 %prep
-%autosetup -n qView
+%autosetup -n %{name}-%{version}
 
 %build
-qmake-qt5
-%make_build
+%cmake
+%cmake_build
 
 %install
-mkdir -p %{buildroot}/usr/bin/
-cp bin/qview %{buildroot}/usr/bin/
-mkdir -p %{buildroot}/usr/share/icons/GPLv3
-cp -r dist/linux/hicolor %{buildroot}/usr/share/icons/
-mkdir -p %{buildroot}/usr/share/applications
-cp dist/linux/com.interversehq.qView.desktop %{buildroot}/usr/share/applications/
-mkdir -p %{buildroot}/usr/share/metainfo/
-cp dist/linux/com.interversehq.qView.appdata.xml %{buildroot}/usr/share/metainfo/
+%cmake_install
 
 %files
-/usr/bin/*
-/usr/share/icons/*
-/usr/share/applications/*
-/usr/share/metainfo/*
 %license LICENSE
 %doc README.md
+%{_bindir}/qview
+%{_datadir}/applications/com.interversehq.qView.desktop
+%{_datadir}/icons/hicolor/*/apps/com.interversehq.qView*.png
+%{_datadir}/icons/hicolor/*/apps/com.interversehq.qView*.svg
+%{_datadir}/metainfo/com.interversehq.qView.appdata.xml
 
 %changelog
