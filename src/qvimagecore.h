@@ -121,8 +121,11 @@ public:
     static QImage applyAdjustments(const QImage &source, int brightness, int contrast,
                                    int saturation = 0, int warmth = 0);
 
+    static bool savePixmapToFile(const QPixmap &pixmap, const QString &filePath,
+                                 QString *errorString = nullptr);
     bool saveCopy(const QString &filePath, QString *errorString = nullptr) const;
     bool replaceCurrentFile(QString *errorString = nullptr);
+    bool replaceCurrentFileWith(const QPixmap &pixmap, QString *errorString = nullptr) const;
     void markCurrentFileSaved();
 
     QPixmap scaleExpensively(const int desiredWidth, const int desiredHeight);

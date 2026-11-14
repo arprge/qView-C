@@ -488,11 +488,14 @@ void QVGraphicsView::makeUnscaled()
     if (transform().m22() < 0)
         flipped = true;
 
-    // Return to original size
-    if (getCurrentFileDetails().isMovieLoaded)
-        loadedPixmapItem->setPixmap(getLoadedMovie().currentPixmap());
-    else
-        loadedPixmapItem->setPixmap(getLoadedPixmap());
+    // Return to original size (keep live adjust preview and its scale intact while adjusting)
+    if (editMode != EditMode::Adjust) {
+        loadedPixmapItem->setScale(1.0);
+        if (getCurrentFileDetails().isMovieLoaded)
+            loadedPixmapItem->setPixmap(getLoadedMovie().currentPixmap());
+        else
+            loadedPixmapItem->setPixmap(getLoadedPixmap());
+    }
 
     setTransform(absoluteTransform);
 

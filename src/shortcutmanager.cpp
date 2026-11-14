@@ -142,14 +142,6 @@ void ShortcutManager::initializeShortcutsList()
             { tr("Mirror"), "mirror", QStringList(QKeySequence(Qt::Key_F).toString()), {} });
     shortcutsList.append(
             { tr("Flip"), "flip", QStringList(QKeySequence(Qt::CTRL | Qt::Key_F).toString()), {} });
-    shortcutsList.append(
-            { tr("Crop"), "editcrop", QStringList(QKeySequence(Qt::Key_C).toString()), {} });
-    shortcutsList.append({ tr("Adjust"),
-                           "brightnesscontrast",
-                           QStringList(QKeySequence(Qt::Key_B).toString()),
-                           {} });
-    shortcutsList.append(
-            { tr("Draw"), "draw", QStringList(QKeySequence(Qt::Key_D).toString()), {} });
 
     // Fixes alt+enter only working with numpad enter when using qt's standard keybinds
 #ifdef Q_OS_WIN
@@ -162,6 +154,14 @@ void ShortcutManager::initializeShortcutsList()
         shortcutsList.last().defaultShortcuts << QKeySequence(Qt::Key_F11).toString();
     }
 #endif
+    shortcutsList.append(
+            { tr("Crop"), "editcrop", QStringList(QKeySequence(Qt::Key_C).toString()), {} });
+    shortcutsList.append({ tr("Adjust"),
+                           "brightnesscontrast",
+                           QStringList(QKeySequence(Qt::Key_B).toString()),
+                           {} });
+    shortcutsList.append(
+            { tr("Draw"), "draw", QStringList(QKeySequence(Qt::Key_D).toString()), {} });
     shortcutsList.append({ tr("Save Frame As"),
                            "saveframeas",
                            keyBindingsToStringList(QKeySequence::Save),

@@ -164,10 +164,13 @@ QImage QVImageCore::applyAdjustments(const QImage &source, int brightness, int c
 
     const int width = result.width();
     const int height = result.height();
-    const auto processRows = [&result, &curves, width, saturationFp,
+    // Detach once on the main thread so worker threads only index raw scanline memory.
+    uchar *bits = result.bits();
+    const qsizetype bytesPerLine = result.bytesPerLine();
+    const auto processRows = [bits, bytesPerLine, &curves, width, saturationFp,
                               applySaturationToChannel](int firstRow, int lastRow) {
         for (int y = firstRow; y < lastRow; ++y) {
-            auto *line = reinterpret_cast<QRgb *>(result.scanLine(y));
+            auto *line = reinterpret_cast<QRgb *>(bits + static_cast<qsizetype>(y) * bytesPerLine);
             if (!applySaturationToChannel) {
                 for (int x = 0; x < width; ++x)
                     line[x] = applyToneCurves(line[x], curves);
@@ -183,8 +186,6 @@ QImage QVImageCore::applyAdjustments(const QImage &source, int brightness, int c
     if (static_cast<qint64>(width) * height < parallelPixelThreshold || threadCount < 2) {
         processRows(0, height);
     } else {
-        // Detach before sharing the buffer across threads
-        result.detach();
         QList<QFuture<void>> futures;
         const int chunk = (height + threadCount - 1) / threadCount;
         for (int first = 0; first < height; first += chunk)
@@ -199,11 +200,12 @@ QImage QVImageCore::applyAdjustments(const QImage &source, int brightness, int c
     return result;
 }
 
-bool QVImageCore::saveCopy(const QString &filePath, QString *errorString) const
+bool QVImageCore::savePixmapToFile(const QPixmap &pixmap, const QString &filePath,
+                                   QString *errorString)
 {
-    if (!currentFileDetails.isPixmapLoaded || currentFileDetails.isMovieLoaded) {
+    if (pixmap.isNull()) {
         if (errorString)
-            *errorString = tr("No still image is loaded.");
+            *errorString = tr("No image data to save.");
         return false;
     }
 
@@ -225,7 +227,7 @@ bool QVImageCore::saveCopy(const QString &filePath, QString *errorString) const
     }
 
     QImageWriter writer(&file, format);
-    if (!writer.write(loadedPixmap.toImage())) {
+    if (!writer.write(pixmap.toImage())) {
         if (errorString)
             *errorString = writer.errorString();
         file.cancelWriting();
@@ -241,7 +243,23 @@ bool QVImageCore::saveCopy(const QString &filePath, QString *errorString) const
     return true;
 }
 
+bool QVImageCore::saveCopy(const QString &filePath, QString *errorString) const
+{
+    if (!currentFileDetails.isPixmapLoaded || currentFileDetails.isMovieLoaded) {
+        if (errorString)
+            *errorString = tr("No still image is loaded.");
+        return false;
+    }
+
+    return savePixmapToFile(loadedPixmap, filePath, errorString);
+}
+
 bool QVImageCore::replaceCurrentFile(QString *errorString)
+{
+    return replaceCurrentFileWith(loadedPixmap, errorString);
+}
+
+bool QVImageCore::replaceCurrentFileWith(const QPixmap &pixmap, QString *errorString) const
 {
     if (!currentFileDetails.isPixmapLoaded || currentFileDetails.isMovieLoaded) {
         if (errorString)
@@ -256,13 +274,19 @@ bool QVImageCore::replaceCurrentFile(QString *errorString)
         return false;
     }
 
-    return saveCopy(filePath, errorString);
+    return savePixmapToFile(pixmap, filePath, errorString);
 }
 
 void QVImageCore::markCurrentFileSaved()
 {
+    const QString oldCacheKey =
+            getPixmapCacheKey(currentFileDetails.fileInfo.absoluteFilePath(),
+                              currentFileDetails.fileInfo.size(), getTargetColorSpace());
+    QVImageCore::imageCache.remove(oldCacheKey);
+
     currentFileDetails.fileInfo.refresh();
     currentFileDetails.baseImageSize = loadedPixmap.size();
+    currentFileDetails.loadedPixmapSize = loadedPixmap.size();
     // The saved pixels already contain the current rotation. Reset it so a
     // reload does not rotate the image a second time.
     currentRotation = 0;

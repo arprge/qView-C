@@ -8,6 +8,8 @@
 #include <QList>
 #include <QWidget>
 
+#include <array>
+
 class QGridLayout;
 class QLabel;
 class QPushButton;
@@ -61,6 +63,7 @@ private:
     void createAdjustControl(QGridLayout *grid, int row, int columnGroup,
                              const QString &labelText, AdjustControl &control);
 
+    std::array<AdjustControl *, 4> adjustControls();
     void resetAdjustSliders();
     void emitAdjustChanged();
     void updateCropHintStyle();

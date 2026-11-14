@@ -132,7 +132,7 @@ void QVGraphicsView::updateEditEnterCursor()
     if (editMode == EditMode::Draw)
         viewport()->setCursor(Qt::CrossCursor);
     else if (editMode == EditMode::Crop)
-        updateCropCursor(cropHandleAt(mapToScene(mapFromGlobal(QCursor::pos()))));
+        updateCropCursor(cropHandleAt(mapToScene(viewport()->mapFromGlobal(QCursor::pos()))));
     else
         viewport()->setCursor(Qt::ArrowCursor);
 }
@@ -146,6 +146,7 @@ bool QVGraphicsView::handleEditMousePress(QMouseEvent *event)
             cropDragging = true;
             cropDragStartScene = scenePos;
             cropRectAtDragStart = cropRect;
+            updateCropCursor(cropDragHandle);
         }
         event->accept();
         return true;
@@ -207,9 +208,10 @@ bool QVGraphicsView::handleEditShortcutOverride(QEvent *event)
         return false;
 
     auto *keyEvent = static_cast<QKeyEvent *>(event);
-    const bool isEnterKey =
-            keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter;
-    if (isEnterKey || keyEvent->key() == Qt::Key_Escape
+    const Qt::KeyboardModifiers baseModifiers = keyEvent->modifiers() & ~Qt::KeypadModifier;
+    const bool isCommitEnter = (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter)
+            && (baseModifiers == Qt::NoModifier || baseModifiers == Qt::ControlModifier);
+    if (isCommitEnter || keyEvent->key() == Qt::Key_Escape
         || (editMode == EditMode::Draw && keyEvent->matches(QKeySequence::Undo))) {
         keyEvent->accept();
         return true;
@@ -344,81 +346,63 @@ bool QVGraphicsView::beginEdit(EditMode mode)
     return true;
 }
 
-bool QVGraphicsView::commitCropEdit()
+QPixmap QVGraphicsView::renderEditedPixmap() const
 {
-    const QRect pixelRect = cropPixelRect();
-    if (pixelRect.width() < 1 || pixelRect.height() < 1)
-        return false;
+    if (!isEditing())
+        return {};
 
-    // Borders still on the image edges: nothing to crop
-    if (pixelRect == QRect(QPoint(0, 0), getLoadedPixmap().size()))
-        return false;
+    switch (editMode) {
+    case EditMode::Crop: {
+        const QRect pixelRect = cropPixelRect();
+        if (pixelRect.width() < 1 || pixelRect.height() < 1)
+            return {};
+        // Borders still on the image edges: nothing to crop
+        if (pixelRect == QRect(QPoint(0, 0), getLoadedPixmap().size()))
+            return {};
+        return getLoadedPixmap().copy(pixelRect);
+    }
+    case EditMode::Adjust:
+        if (!hasPendingAdjustments())
+            return {};
+        return QPixmap::fromImage(QVImageCore::applyAdjustments(
+                editBaseImage, pendingBrightness, pendingContrast, pendingSaturation,
+                pendingWarmth));
+    case EditMode::Draw:
+        if (drawingItems.isEmpty())
+            return {};
+        return flattenDrawings();
+    case EditMode::None:
+        return {};
+    }
 
-    cropDimItem->hide();
-    cropSelectionItem->hide();
-    imageCore.cropImage(pixelRect);
-    return true;
+    return {};
 }
 
-bool QVGraphicsView::commitAdjustEdit()
+void QVGraphicsView::finishEditCommit(const QPixmap &editedPixmap)
 {
-    adjustPreviewTimer->stop();
+    if (!isEditing() || editedPixmap.isNull())
+        return;
 
-    // Nothing changed: stay in edit mode instead of prompting to save
-    if (!hasPendingAdjustments())
-        return false;
+    const bool wasCrop = editMode == EditMode::Crop;
+    imageCore.setLoadedPixmap(editedPixmap);
+    showPixmap(editedPixmap);
+    resetEditState();
 
-    // Compute the full-resolution result on commit
-    const QPixmap finalPixmap = QPixmap::fromImage(QVImageCore::applyAdjustments(
-            editBaseImage, pendingBrightness, pendingContrast, pendingSaturation, pendingWarmth));
-    imageCore.setLoadedPixmap(finalPixmap);
-    showPixmap(finalPixmap);
-    return true;
-}
-
-bool QVGraphicsView::commitDrawEdit()
-{
-    // Nothing drawn: stay in edit mode instead of prompting to save
-    if (drawingItems.isEmpty())
-        return false;
-
-    const QPixmap flattened = flattenDrawings();
-    if (flattened.isNull())
-        return false;
-
-    imageCore.setLoadedPixmap(flattened);
-    showPixmap(flattened);
-    return true;
+    if (wasCrop) {
+        resetScale();
+        emit updatedLoadedPixmapItem();
+    } else if (qvGetSettingBool(ScalingEnabled) && !isOriginalSize) {
+        expensiveScaleTimerNew->start();
+    }
 }
 
 bool QVGraphicsView::applyEdit()
 {
-    if (!isEditing())
+    const QPixmap editedPixmap = renderEditedPixmap();
+    if (editedPixmap.isNull())
         return false;
 
-    bool committed = false;
-    switch (editMode) {
-    case EditMode::Crop:
-        committed = commitCropEdit();
-        break;
-    case EditMode::Adjust:
-        committed = commitAdjustEdit();
-        break;
-    case EditMode::Draw:
-        committed = commitDrawEdit();
-        break;
-    case EditMode::None:
-        break;
-    }
-
-    if (!committed)
-        return false;
-
-    resetEditState();
-
-    if (qvGetSettingBool(ScalingEnabled) && !isOriginalSize)
-        expensiveScaleTimerNew->start();
-
+    finishEditCommit(editedPixmap);
     return true;
 }
 
@@ -610,6 +594,7 @@ QPixmap QVGraphicsView::flattenDrawings() const
 
 void QVGraphicsView::clearDrawings()
 {
+    delete activeDrawingItem;
     activeDrawingItem = nullptr;
     activePenPath = QPainterPath();
     isDrawing = false;
@@ -656,8 +641,9 @@ void QVGraphicsView::applyAdjustPreview()
     const QPixmap preview = QPixmap::fromImage(QVImageCore::applyAdjustments(
             editPreviewImage, pendingBrightness, pendingContrast, pendingSaturation,
             pendingWarmth));
-    const qreal scaleFactor =
-            static_cast<qreal>(editBaseImage.width()) / qMax(1, preview.width());
+    const qreal scaleFactor = editBaseImage.width() >= editBaseImage.height()
+            ? static_cast<qreal>(editBaseImage.width()) / qMax(1, preview.width())
+            : static_cast<qreal>(editBaseImage.height()) / qMax(1, preview.height());
     loadedPixmapItem->setPixmap(preview);
     loadedPixmapItem->setScale(scaleFactor);
 }
@@ -914,8 +900,9 @@ QRectF QVGraphicsView::dragCropHorizontalEdge(QRectF rect, const QRectF &bounds,
 
     const qreal rawWidth = dragLeft ? (rect.width() - dx) : (rect.width() + dx);
     const qreal width = qBound(minimumCropSize, static_cast<qreal>(qRound(rawWidth)),
-                               qMax(minimumCropSize, static_cast<qreal>(qRound(maxWidth))));
-    const qreal height = qMax(minimumCropSize, static_cast<qreal>(qRound(width / aspectRatio)));
+                               qMax(minimumCropSize, static_cast<qreal>(qFloor(maxWidth))));
+    const qreal height = qBound(minimumCropSize, static_cast<qreal>(qRound(width / aspectRatio)),
+                                bounds.height());
     qreal top = qRound(centerY - height / 2.0);
     top = qBound(bounds.top(), top, bounds.bottom() - height);
     const qreal left = dragLeft ? (anchorX - width) : anchorX;
@@ -936,8 +923,9 @@ QRectF QVGraphicsView::dragCropVerticalEdge(QRectF rect, const QRectF &bounds, q
 
     const qreal rawHeight = dragTop ? (rect.height() - dy) : (rect.height() + dy);
     const qreal height = qBound(minimumCropSize, static_cast<qreal>(qRound(rawHeight)),
-                                qMax(minimumCropSize, static_cast<qreal>(qRound(maxHeight))));
-    const qreal width = qMax(minimumCropSize, static_cast<qreal>(qRound(height * aspectRatio)));
+                                qMax(minimumCropSize, static_cast<qreal>(qFloor(maxHeight))));
+    const qreal width = qBound(minimumCropSize, static_cast<qreal>(qRound(height * aspectRatio)),
+                               bounds.width());
     qreal left = qRound(centerX - width / 2.0);
     left = qBound(bounds.left(), left, bounds.right() - width);
     const qreal top = dragTop ? (anchorY - height) : anchorY;

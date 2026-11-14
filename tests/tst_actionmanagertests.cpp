@@ -1,16 +1,20 @@
 #include <QtTest>
 
+#include "mainwindow.h"
 #include "qvapplication.h"
 #include "qveditpanel.h"
+#include "qvgraphicsview.h"
 #include "qvimagecore.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QEvent>
+#include <QImage>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSlider>
 #include <QSpinBox>
+#include <QTemporaryDir>
 #include <QToolButton>
 
 class ActionManagerTests : public QObject
@@ -32,6 +36,7 @@ private slots:
     void testEditPanelCropBehavior();
     void testEditPanelAdjustBehavior();
     void testEditPanelDrawBehavior();
+    void testEditSessionAndWindowActionScope();
 
 private:
     static QPushButton *findVisibleButton(QVEditPanel &panel, const QString &text);
@@ -236,6 +241,13 @@ void ActionManagerTests::testEditPanelCropBehavior()
     panel.setCropDimensions(QRect(100, 100, 800, 600), QSize(1920, 1080));
     QVERIFY(cropResetButton->isEnabled());
 
+    QToolButton *originalPreset = findVisibleToolButton(panel, QStringLiteral("Original"));
+    QVERIFY(originalPreset);
+    panel.setCropDimensions(QRect(0, 0, 1920, 1080), QSize(1920, 1080));
+    QVERIFY(!cropResetButton->isEnabled());
+    originalPreset->click();
+    QVERIFY(cropResetButton->isEnabled());
+
     QToolButton *squarePreset = findVisibleToolButton(panel, QStringLiteral("1:1"));
     QVERIFY(squarePreset);
 
@@ -342,9 +354,82 @@ void ActionManagerTests::testEditPanelDrawBehavior()
     QCOMPARE(panel.drawSettings().tool, QVGraphicsView::DrawSettings::Tool::Rectangle);
     QCOMPARE(drawSpy.count(), 1);
 
+    // Stroke width spin/slider should allow 3 and 5 without snapping to default 4
+    QSpinBox *widthSpin = panel.findChild<QSpinBox *>();
+    QSlider *widthSlider = findSliderByToolTip(panel, QStringLiteral("Stroke width"));
+    QVERIFY(widthSpin && widthSlider);
+    widthSpin->setValue(3);
+    QCOMPARE(panel.drawSettings().width, 3);
+    QCOMPARE(widthSlider->value(), 3);
+    widthSpin->setValue(5);
+    QCOMPARE(panel.drawSettings().width, 5);
+    QCOMPARE(widthSlider->value(), 5);
+
     // Ensure the Draw panel stays a single slim row vertically
     QVERIFY2(panel.minimumSizeHint().height() < 80,
              qPrintable(QString("Draw panel too tall: %1").arg(panel.minimumSizeHint().height())));
+}
+
+void ActionManagerTests::testEditSessionAndWindowActionScope()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString imagePath = tempDir.filePath(QStringLiteral("sample.png"));
+
+    QImage source(64, 48, QImage::Format_ARGB32);
+    source.fill(QColor(80, 120, 160));
+    QVERIFY(source.save(imagePath, "PNG"));
+
+    MainWindow windowA;
+    MainWindow windowB;
+    windowA.openFile(imagePath);
+    windowB.openFile(imagePath);
+
+    QVERIFY(QTest::qWaitFor([&]() {
+        return windowA.getIsPixmapLoaded() && windowB.getIsPixmapLoaded();
+    }));
+
+    const auto getRotateRightAction = [](MainWindow &window) -> QAction * {
+        const auto clones = qvApp->getActionManager().getAllClonesOfAction(
+                QStringLiteral("rotateright"), &window);
+        return clones.isEmpty() ? nullptr : clones.first();
+    };
+
+    QAction *rotateA = getRotateRightAction(windowA);
+    QAction *rotateB = getRotateRightAction(windowB);
+    QVERIFY(rotateA && rotateB);
+    QVERIFY(rotateA->isEnabled());
+    QVERIFY(rotateB->isEnabled());
+
+    // Entering edit mode in windowA must disable rotate only in windowA
+    windowA.crop();
+    QVERIFY(!rotateA->isEnabled());
+    QVERIFY(rotateB->isEnabled());
+
+    auto *viewA = windowA.findChild<QVGraphicsView *>();
+    QVERIFY(viewA);
+    QVERIFY(viewA->isEditing());
+    // Unmodified crop returns null (nothing to commit)
+    QVERIFY(viewA->renderEditedPixmap().isNull());
+
+    // Switching to 1:1 aspect changes 64x48 to 48x48 and produces a valid edited pixmap
+    viewA->setCropAspectRatio(QSizeF(1, 1));
+    const QPixmap edited = viewA->renderEditedPixmap();
+    QVERIFY(!edited.isNull());
+    QCOMPARE(edited.size(), QSize(48, 48));
+
+    // Cancelling restores edit mode cleanly without modifying the loaded image
+    viewA->cancelEdit();
+    QVERIFY(!viewA->isEditing());
+    QCOMPARE(viewA->getLoadedPixmap().size(), QSize(64, 48));
+    QVERIFY(rotateA->isEnabled());
+
+    // Saving via savePixmapToFile succeeds and round-trips dimensions
+    const QString copyPath = tempDir.filePath(QStringLiteral("sample-edited.png"));
+    QString errorString;
+    QVERIFY2(QVImageCore::savePixmapToFile(edited, copyPath, &errorString),
+             qPrintable(errorString));
+    QCOMPARE(QImage(copyPath).size(), QSize(48, 48));
 }
 
 int main(int argc, char *argv[])

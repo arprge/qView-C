@@ -1,14 +1,15 @@
 #include "mainwindow.h"
-#include "qveditpanel.h"
 #include "qvapplication.h"
+#include "qveditpanel.h"
+#include "qvimagecore.h"
 
-#include <QAction>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QImageWriter>
 #include <QLayout>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QSettings>
 
 namespace {
@@ -95,33 +96,23 @@ void MainWindow::onEditModeChanged(QVGraphicsView::EditMode mode)
 
     editPanel->setMode(mode);
     editPanel->show();
-
-    const QStringList actionsDisabledWhileEditing = {
-        QStringLiteral("rotateleft"), QStringLiteral("rotateright"), QStringLiteral("mirror"),
-        QStringLiteral("flip")
-    };
-    for (const QString &actionKey : actionsDisabledWhileEditing) {
-        const QList<QAction *> actions =
-                qvApp->getActionManager().getAllInstancesOfAction(actionKey);
-        for (QAction *action : actions)
-            action->setEnabled(false);
-    }
-
+    disableActions();
     graphicsView->setFocus();
 }
 
 void MainWindow::onCommitRequested(QVGraphicsView::CommitAction action)
 {
-    if (!graphicsView->applyEdit())
+    const QPixmap editedPixmap = graphicsView->renderEditedPixmap();
+    if (editedPixmap.isNull())
         return;
 
     if (action == QVGraphicsView::CommitAction::SaveCopy)
-        saveEditedCopy();
+        saveEditedCopy(editedPixmap);
     else
-        replaceOriginalWithEdit();
+        replaceOriginalWithEdit(editedPixmap);
 }
 
-void MainWindow::saveEditedCopy()
+void MainWindow::saveEditedCopy(const QPixmap &editedPixmap)
 {
     const QFileInfo currentFile = getCurrentFileDetails().fileInfo;
 
@@ -130,6 +121,8 @@ void MainWindow::saveEditedCopy()
     filters << tr("All Files (*)");
 
     const QString defaultSuffix = preferredSaveSuffix(currentFile, writableSuffixes);
+    const QString defaultFilter =
+            QStringLiteral("%1 (*.%2)").arg(defaultSuffix.toUpper(), defaultSuffix);
     const QString defaultFileName =
             currentFile.completeBaseName() + QStringLiteral("-edited.") + defaultSuffix;
 
@@ -143,38 +136,44 @@ void MainWindow::saveEditedCopy()
 
     auto *saveDialog = new QFileDialog(this, tr("Save Edited Copy As..."));
     saveDialog->setAttribute(Qt::WA_DeleteOnClose);
+    saveDialog->setWindowModality(Qt::WindowModal);
     saveDialog->setDirectory(targetDir);
     saveDialog->setNameFilters(filters);
+    if (filters.contains(defaultFilter))
+        saveDialog->selectNameFilter(defaultFilter);
     saveDialog->selectFile(QDir(targetDir).filePath(defaultFileName));
     saveDialog->setDefaultSuffix(defaultSuffix);
     saveDialog->setAcceptMode(QFileDialog::AcceptSave);
     saveDialog->setFileMode(QFileDialog::AnyFile);
     saveDialog->open();
 
-    connect(saveDialog, &QFileDialog::fileSelected, this, [this](const QString &fileName) {
-        QString errorString;
-        if (!graphicsView->saveCopy(fileName, &errorString)) {
-            QMessageBox::warning(this, tr("Save Failed"),
-                                 tr("Could not save the image.\n%1").arg(errorString));
-            return;
-        }
+    connect(saveDialog, &QFileDialog::fileSelected, this,
+            [this, editedPixmap](const QString &fileName) {
+                QString errorString;
+                if (!QVImageCore::savePixmapToFile(editedPixmap, fileName, &errorString)) {
+                    QMessageBox::warning(this, tr("Save Failed"),
+                                         tr("Could not save the image.\n%1").arg(errorString));
+                    return;
+                }
 
-        QSettings settings;
-        settings.beginGroup(QStringLiteral("recents"));
-        settings.setValue(QStringLiteral("lastFileDialogDir"),
-                          QFileInfo(fileName).absolutePath());
-    });
+                QSettings settings;
+                settings.beginGroup(QStringLiteral("recents"));
+                settings.setValue(QStringLiteral("lastFileDialogDir"),
+                                  QFileInfo(fileName).absolutePath());
+                graphicsView->cancelEdit();
+            });
 }
 
-void MainWindow::replaceOriginalWithEdit()
+void MainWindow::replaceOriginalWithEdit(const QPixmap &editedPixmap)
 {
     QString errorString;
-    if (!graphicsView->replaceCurrentFile(&errorString)) {
+    if (!graphicsView->replaceCurrentFileWith(editedPixmap, &errorString)) {
         QMessageBox::warning(this, tr("Replace Failed"),
                              tr("Could not replace the original image.\n%1").arg(errorString));
         return;
     }
 
+    graphicsView->finishEditCommit(editedPixmap);
     graphicsView->markCurrentFileSaved();
     refreshProperties();
     updateWindowTitle();
