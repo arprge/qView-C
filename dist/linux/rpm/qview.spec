@@ -1,4 +1,4 @@
-Name:		qview
+Name:		qview-c
 Version:	7.1
 Release:	1%{?dist}
 Summary:	Practical and minimal image viewer
