@@ -412,15 +412,24 @@ void MainWindow::fileChanged()
 
 void MainWindow::disableActions()
 {
+    const bool isEditing = graphicsView->isEditing();
     const auto &actionLibrary = qvApp->getActionManager().getActionLibrary();
     for (const auto &action : actionLibrary) {
         const auto &data = action->data().toStringList();
+        const QString &actionKey = data.first();
         const auto &clonesOfAction =
-                qvApp->getActionManager().getAllClonesOfAction(data.first(), this);
+                qvApp->getActionManager().getAllClonesOfAction(actionKey, this);
+        const bool disabledWhileEditing = isEditing
+                && (actionKey == "rotateleft" || actionKey == "rotateright"
+                    || actionKey == "mirror" || actionKey == "flip");
 
         // Enable this window's actions when a file is loaded
         if (data.last().contains("disable")) {
             for (const auto &clone : clonesOfAction) {
+                if (disabledWhileEditing) {
+                    clone->setEnabled(false);
+                    continue;
+                }
                 const auto &cloneData = clone->data().toStringList();
                 if (cloneData.last() == "disable") {
                     clone->setEnabled(getCurrentFileDetails().isPixmapLoaded);

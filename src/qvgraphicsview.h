@@ -88,6 +88,8 @@ public:
     void rotateImage(int rotation);
 
     bool beginEdit(EditMode mode);
+    QPixmap renderEditedPixmap() const;
+    void finishEditCommit(const QPixmap &editedPixmap);
     bool applyEdit();
     void cancelEdit();
     bool isEditing() const { return editMode != EditMode::None; }
@@ -111,6 +113,10 @@ public:
     bool replaceCurrentFile(QString *errorString = nullptr)
     {
         return imageCore.replaceCurrentFile(errorString);
+    }
+    bool replaceCurrentFileWith(const QPixmap &pixmap, QString *errorString = nullptr) const
+    {
+        return imageCore.replaceCurrentFileWith(pixmap, errorString);
     }
     void markCurrentFileSaved() { imageCore.markCurrentFileSaved(); }
 
@@ -193,9 +199,6 @@ private:
     bool handleEditShortcutOverride(QEvent *event);
     void clearEditBuffers();
     void resetEditState();
-    bool commitCropEdit();
-    bool commitAdjustEdit();
-    bool commitDrawEdit();
     bool hasPendingAdjustments() const;
     void showPixmap(const QPixmap &pixmap);
     void applyAdjustPreview();

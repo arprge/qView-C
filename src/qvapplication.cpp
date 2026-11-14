@@ -509,8 +509,10 @@ void QVApplication::applyUiScale()
     if (font() != scaledFont)
         setFont(scaledFont);
 
-    if (!baseStyleName.isEmpty())
-        setStyle(new QVCompactProxyStyle(factor, QStyleFactory::create(baseStyleName)));
+    if (!baseStyleName.isEmpty()) {
+        if (QStyle *baseStyle = QStyleFactory::create(baseStyleName))
+            setStyle(new QVCompactProxyStyle(factor, baseStyle));
+    }
 }
 
 QIcon QVApplication::iconFromFont(const QString &fontFamily, const QChar &codePoint, const int pixelSize, const qreal pixelRatio)

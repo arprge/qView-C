@@ -45,7 +45,8 @@ constexpr qreal hintFontScale = 0.88;
 
 QPixmap createIconPixmap(int logicalSize)
 {
-    QPixmap pixmap(logicalSize * 2, logicalSize * 2);
+    const int pixelSize = qRound(logicalSize * iconDevicePixelRatio);
+    QPixmap pixmap(pixelSize, pixelSize);
     pixmap.setDevicePixelRatio(iconDevicePixelRatio);
     pixmap.fill(Qt::transparent);
     return pixmap;
@@ -137,9 +138,9 @@ void setLabelBold(QLabel *label, bool bold)
 class AdjustSlider : public QSlider
 {
 public:
-    explicit AdjustSlider(int defaultValue, Qt::Orientation orientation,
+    explicit AdjustSlider(int defaultValue, bool snapToDefault, Qt::Orientation orientation,
                           QWidget *parent = nullptr)
-        : QSlider(orientation, parent), defaultValue(defaultValue)
+        : QSlider(orientation, parent), defaultValue(defaultValue), snapToDefault(snapToDefault)
     {
     }
 
@@ -225,12 +226,13 @@ private:
         const int val = QStyle::sliderValueFromPosition(minimum(), maximum(), positionInGroove,
                                                          qMax(1, span), option.upsideDown);
         // Snap to default value (0) if within 1 unit to avoid skipping 0 due to pixel discretization
-        if (qAbs(val - defaultValue) <= 1)
+        if (snapToDefault && qAbs(val - defaultValue) <= 1)
             return defaultValue;
         return val;
     }
 
     int defaultValue = 0;
+    bool snapToDefault = false;
     bool trackDragging = false;
 };
 
@@ -317,7 +319,7 @@ void QVEditPanel::createCropPage()
 
         const QSizeF ratio = preset.ratio;
         connect(button, &QToolButton::clicked, this, [this, ratio]() {
-            if (cropResetButton && ratio.isValid() && !ratio.isNull())
+            if (cropResetButton && !ratio.isNull())
                 cropResetButton->setEnabled(true);
             emit cropAspectRatioChanged(ratio);
         });
@@ -369,7 +371,7 @@ void QVEditPanel::createAdjustControl(QGridLayout *grid, int row, int columnGrou
     auto *label = new QLabel(labelText, adjustPage);
     label->setFocusPolicy(Qt::NoFocus);
 
-    control.slider = new AdjustSlider(0, Qt::Horizontal, adjustPage);
+    control.slider = new AdjustSlider(0, true, Qt::Horizontal, adjustPage);
     control.slider->setRange(adjustMinimum, adjustMaximum);
     control.slider->setSingleStep(adjustSingleStep);
     control.slider->setPageStep(adjustPageStep);
@@ -537,12 +539,13 @@ void QVEditPanel::createDrawPage()
         const QColor color = QColorDialog::getColor(currentDrawSettings.color, this,
                                                     tr("Select Color"),
                                                     QColorDialog::ShowAlphaChannel);
-        if (color.isValid())
+        if (color.isValid()) {
             currentDrawSettings.color = color;
-
-        updateColorButtons();
-        if (color.isValid())
+            updateColorButtons();
             emit drawSettingsChanged(currentDrawSettings);
+        } else {
+            updateColorButtons();
+        }
     });
 
     drawLayout->addWidget(makeVerticalSeparator(drawPage));
@@ -550,7 +553,7 @@ void QVEditPanel::createDrawPage()
     auto *widthLabel = new QLabel(tr("Size"), drawPage);
     widthLabel->setFocusPolicy(Qt::NoFocus);
 
-    widthSlider = new AdjustSlider(defaultDrawWidth, Qt::Horizontal, drawPage);
+    widthSlider = new AdjustSlider(defaultDrawWidth, false, Qt::Horizontal, drawPage);
     widthSlider->setRange(minimumDrawWidth, maximumDrawWidth);
     widthSlider->setValue(currentDrawSettings.width);
     widthSlider->setMinimumWidth(60);
@@ -702,13 +705,16 @@ int QVEditPanel::warmth() const
     return warmthControl.slider->value();
 }
 
+std::array<QVEditPanel::AdjustControl *, 4> QVEditPanel::adjustControls()
+{
+    return { { &brightnessControl, &contrastControl, &saturationControl, &warmthControl } };
+}
+
 void QVEditPanel::resetAdjustSliders()
 {
-    const std::array<QSlider *, 4> sliders = { brightnessControl.slider, contrastControl.slider,
-                                               saturationControl.slider, warmthControl.slider };
-    for (QSlider *slider : sliders) {
-        const QSignalBlocker blocker(slider);
-        slider->setValue(0);
+    for (AdjustControl *control : adjustControls()) {
+        const QSignalBlocker blocker(control->slider);
+        control->slider->setValue(0);
     }
 }
 
@@ -748,12 +754,8 @@ void QVEditPanel::updateCropHintStyle()
 
 void QVEditPanel::updateAdjustLabels()
 {
-    const std::array<AdjustControl *, 4> controls = {
-        { &brightnessControl, &contrastControl, &saturationControl, &warmthControl }
-    };
-
     bool anyModified = false;
-    for (const AdjustControl *control : controls) {
+    for (const AdjustControl *control : adjustControls()) {
         const int value = control->slider->value();
         control->valueLabel->setText(value > 0 ? QStringLiteral("+%1").arg(value)
                                                : QString::number(value));
@@ -775,10 +777,7 @@ void QVEditPanel::updateAdjustReadoutWidths()
                  boldMetrics.horizontalAdvance(QStringLiteral("-100")))
             + readoutPadding;
 
-    const std::array<AdjustControl *, 4> controls = {
-        { &brightnessControl, &contrastControl, &saturationControl, &warmthControl }
-    };
-    for (const AdjustControl *control : controls) {
+    for (const AdjustControl *control : adjustControls()) {
         if (control->valueLabel)
             control->valueLabel->setFixedWidth(readoutWidth);
     }

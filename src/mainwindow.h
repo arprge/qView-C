@@ -11,8 +11,9 @@
 #include <QNetworkAccessManager>
 #include <QStack>
 
-class QVEditPanel;
 class QMenu;
+class QPixmap;
+class QVEditPanel;
 
 namespace Ui {
 class MainWindow;
@@ -170,11 +171,11 @@ protected slots:
 private slots:
     void onEditModeChanged(QVGraphicsView::EditMode mode);
     void onCommitRequested(QVGraphicsView::CommitAction action);
-    void saveEditedCopy();
-    void replaceOriginalWithEdit();
 
 private:
     void setupEditPanel();
+    void saveEditedCopy(const QPixmap &editedPixmap);
+    void replaceOriginalWithEdit(const QPixmap &editedPixmap);
 
     Ui::MainWindow *ui;
     QVGraphicsView *graphicsView;
