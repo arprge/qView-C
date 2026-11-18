@@ -9,6 +9,7 @@ Source0:	%{name}-%{version}.tar.gz
 
 BuildRequires:	cmake >= 3.16
 BuildRequires:	gcc-c++
+BuildRequires:	libX11-devel
 BuildRequires:	qt6-qtbase-devel
 BuildRequires:	qt6-qtsvg-devel
 BuildRequires:	qt6-qttools-devel
@@ -25,6 +26,7 @@ qView is a Qt image viewer designed with minimalism and usability in mind.
 
 %install
 %cmake_install
+rm -rf %{buildroot}%{_datadir}/licenses/qview
 
 %files
 %license LICENSE

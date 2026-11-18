@@ -1,0 +1,25 @@
+pkgname=qview-c
+pkgver=7.1
+pkgrel=1
+pkgdesc="Practical and minimal image viewer with basic image editing"
+arch=('x86_64')
+url="https://github.com/arprge/qView-C"
+license=('GPL-3.0-or-later')
+depends=('qt6-base' 'qt6-svg' 'qt6-imageformats' 'libx11' 'hicolor-icon-theme')
+makedepends=('cmake' 'qt6-tools')
+optdepends=('kimageformats: support for additional image formats')
+provides=('qview')
+conflicts=('qview')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cmake -B build -S "$pkgname-$pkgver" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build --parallel
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install build
+}
