@@ -1,19 +1,12 @@
 name: Build qView
+
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
-    inputs:
-      isRelease:
-        type: boolean
-        description: 'Is this a release build?'
-        required: false
-        default: false
-      appleNotarize:
-        type: boolean
-        description: 'Notarize with Apple?'
-        required: false
-        default: false
+
 jobs:
   build:
     strategy:
@@ -22,30 +15,27 @@ jobs:
         include:
           - runner: 'ubuntu-22.04'
             qtVersion: '5.15.2'
-          - runner: 'macos-15'
-            qtVersion: '6.8.3'
-            qtModules: 'qtimageformats'
-            buildArch: 'Universal'
-          - runner: 'macos-15'
-            qtVersion: '5.15.2'
-            osSuffix: '_legacy'
-            buildArch: 'X64'
+            artifactName: 'qView-linux-appimage'
+            artifactPath: 'bin/*.AppImage'
           - runner: 'windows-2022'
             qtVersion: '6.8.3'
             qtArch: 'win64_msvc2022_64'
-            osSuffix: '_64'
             qtModules: 'qtimageformats'
+            artifactName: 'qView-windows-win64'
+            artifactPath: 'bin'
           - runner: 'windows-2022'
             qtVersion: '6.8.3'
             qtArch: 'win64_msvc2022_arm64_cross_compiled'
-            osSuffix: '_arm64'
             qtModules: 'qtimageformats'
             buildArch: 'Arm64'
+            artifactName: 'qView-windows-winarm64'
+            artifactPath: 'bin'
           - runner: 'windows-2022'
             qtVersion: '5.15.2'
             qtArch: 'win32_msvc2019'
-            osSuffix: '_32'
             buildArch: 'X86'
+            artifactName: 'qView-windows-win32'
+            artifactPath: 'bin'
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Set environment variables
@@ -53,13 +43,6 @@ jobs:
         run: |
           echo "qtArch=${{ matrix.qtArch }}" >> $GITHUB_ENV
           echo "buildArch=${{ matrix.buildArch }}" >> $GITHUB_ENV
-          if [ "${{ inputs.isRelease }}" != "true" ] && [[ "${{ github.ref }}" != refs/tags/v* ]]; then
-            buildNum=$(date '+%Y-%m-%d').$GITHUB_RUN_ATTEMPT
-            echo "nightlyDefines=NIGHTLY=$buildNum" >> $GITHUB_ENV
-            echo "nightlyString=-nightly" >> $GITHUB_ENV
-            echo "buildNumString=$buildNum" >> $GITHUB_ENV
-            echo "buildNumSuffix=-$buildNum" >> $GITHUB_ENV
-          fi
 
       - uses: actions/checkout@v4
 
@@ -76,31 +59,20 @@ jobs:
         run: dist/scripts/build.ps1 -CI
 
       - name: Deploy qView
-        env:
-          APPLE_NOTARIZE_REQUESTED: ${{ inputs.appleNotarize }}
-          APPLE_DEVID_APP_CERT_DATA: ${{ secrets.APPLE_DEVID_APP_CERT_DATA }}
-          APPLE_DEVID_APP_CERT_PASS: ${{ secrets.APPLE_DEVID_APP_CERT_PASS }}
-          APPLE_ID_USER: ${{ secrets.APPLE_ID_USER }}
-          APPLE_ID_PASS: ${{ secrets.APPLE_ID_PASS }}
         shell: pwsh
         run: |
-          if ("${{ matrix.skipPlugins }}" -ne "true") {
-            & dist/scripts/download-plugins.ps1
-          }
+          & dist/scripts/download-plugins.ps1
           if ($IsWindows) {
-            & dist/scripts/windeployqt.ps1 ${{ env.buildNumString }}
-          } elseif ($IsMacOS) {
-            & dist/scripts/macinstallcert.ps1
-            bash dist/scripts/macdeploy.sh ${{ env.buildNumString }}
+            & dist/scripts/windeployqt.ps1 -Portable
           } else {
-            bash dist/scripts/linuxdeployqt.sh ${{ env.buildNumString }}
+            bash dist/scripts/linuxdeployqt.sh
           }
 
-      - name: 'Upload Artifact'
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qView${{ env.nightlyString }}-${{ runner.os }}${{ matrix.osSuffix }}${{ env.buildNumSuffix }}
-          path: bin
+          name: ${{ matrix.artifactName }}
+          path: ${{ matrix.artifactPath }}
 
   build-deb:
     runs-on: ubuntu-latest
@@ -183,45 +155,43 @@ jobs:
           name: qView-arch
           path: out/*.pkg.tar.zst
 
-  nightly-release:
+  release:
     needs: [build, build-deb, build-rpm, build-arch]
-    if: github.ref_name == 'main' && github.event_name == 'push'
+    if: github.ref_name == 'main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from CMakeLists.txt
+        id: ver
+        run: |
+          VERSION=$(sed -n 's/^project(qView VERSION \([^ ]*\).*/\1/p' CMakeLists.txt)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: List downloaded files
-        run: ls -l artifacts/
-
-      - name: Package artifacts for release
+      - name: Prepare release files
         run: |
-          mkdir release_files
-          cd artifacts
-          for dir in */; do
-            name=$(basename "$dir")
-            if [[ "$name" == "qView-deb" || "$name" == "qView-rpm" || "$name" == "qView-arch" || "$name" == qView*-Linux* ]]; then
-              cp "$dir"* ../release_files/
-            else
-              zip -r "../release_files/$name.zip" "$dir"
-            fi
-          done
-          cd ..
-          ls -l release_files/
+          mkdir -p release_files
+          cp artifacts/qView-linux-appimage/* release_files/
+          cp artifacts/qView-deb/* release_files/
+          cp artifacts/qView-rpm/* release_files/
+          cp artifacts/qView-arch/* release_files/
+          VERSION="${{ steps.ver.outputs.version }}"
+          (cd artifacts/qView-windows-win64 && zip -r "../../release_files/qView-${VERSION}-win64.zip" .)
+          (cd artifacts/qView-windows-winarm64 && zip -r "../../release_files/qView-${VERSION}-winarm64.zip" .)
+          (cd artifacts/qView-windows-win32 && zip -r "../../release_files/qView-${VERSION}-win32.zip" .)
+          ls -lh release_files/
 
-      - name: Update "Nightly" Release
-        uses: andelf/nightly-release@main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: nightly
-          name: "qView Nightly"
-          prerelease: true
-          body: |
-            Latest automatic build from the main branch. Might be broken.
-
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: qView-C ${{ steps.ver.outputs.version }}
+          prerelease: false
           files: release_files/*
