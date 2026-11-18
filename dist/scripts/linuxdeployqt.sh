@@ -37,7 +37,7 @@ cd bin
 rm -f qview
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib/
 export APPIMAGE_EXTRACT_AND_RUN=1
-../linuxdeployqt-continuous-x86_64.AppImage appdir/usr/share/applications/com.interversehq.qView.desktop -appimage -updateinformation="gh-releases-zsync|jurplel|qView|latest|qView-*x86_64.AppImage.zsync" -extra-plugins=styles/libqt5ct-style.so,platformthemes/libqt5ct.so
+../linuxdeployqt-continuous-x86_64.AppImage appdir/usr/share/applications/com.interversehq.qView.desktop -appimage -extra-plugins=styles/libqt5ct-style.so,platformthemes/libqt5ct.so
 
 if [ -n "$1" ]; then
     mv *.AppImage qView-nightly-$1-x86_64.AppImage

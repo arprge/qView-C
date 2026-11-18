@@ -1,6 +1,7 @@
 param
 (
-    $NightlyVersion = ""
+    $NightlyVersion = "",
+    [switch]$Portable
 )
 
 $qtVersion = [version](qmake -query QT_VERSION)
@@ -46,7 +47,9 @@ if ((Test-Path "$imfDir\kimg_tga.dll") -and (Test-Path "$imfDir\qtga.dll")) {
     Remove-Item "$imfDir\qtga.dll"
 }
 
-if ($NightlyVersion -eq '') {
+if ($Portable) {
+    Write-Host "Keeping portable directory layout in bin/"
+} elseif ($NightlyVersion -eq '') {
     # Call innomake if we are not building a nightly version (no version passed)
     & "dist/scripts/innomake.ps1"
 } else {
