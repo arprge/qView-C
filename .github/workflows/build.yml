@@ -114,7 +114,7 @@ jobs:
       - name: Install build dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends debhelper dpkg-dev cmake g++ qtbase5-dev qtbase5-dev-tools qttools5-dev-tools libqt5svg5-dev libqt5x11extras5-dev libx11-dev
+          apt-get install -y --no-install-recommends build-essential debhelper cmake qtbase5-dev qtbase5-dev-tools qttools5-dev-tools libqt5svg5-dev libqt5x11extras5-dev libx11-dev
 
       - name: Build .deb package
         run: |
