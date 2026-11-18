@@ -158,7 +158,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          pacman -Syu --noconfirm --needed base-devel cmake qt6-base qt6-svg qt6-tools libx11 hicolor-icon-theme tar gzip
+          pacman -Syu --noconfirm --needed base-devel cmake qt6-base qt6-svg qt6-imageformats qt6-tools libx11 hicolor-icon-theme tar gzip
 
       - name: Build .pkg.tar.zst package
         run: |
