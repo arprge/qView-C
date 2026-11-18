@@ -2,6 +2,7 @@
 #include "qvapplication.h"
 
 #include <array>
+#include <cmath>
 
 #include <QColor>
 #include <QCursor>
@@ -47,7 +48,7 @@ QPointF constrainedDrawingTarget(const QPointF &start, const QPointF &current,
 
     if (tool == QVGraphicsView::DrawSettings::Tool::Line) {
         // Snap the line to the nearest 45-degree angle
-        const qreal length = qHypot(delta.x(), delta.y());
+        const qreal length = std::hypot(delta.x(), delta.y());
         if (length <= 0.0)
             return current;
 
@@ -142,7 +143,7 @@ bool QVGraphicsView::handleEditMousePress(QMouseEvent *event)
     if (editMode == EditMode::Crop && event->button() == Qt::LeftButton) {
         const QPointF scenePos = mapToScene(event->pos());
         cropDragHandle = cropHandleAt(scenePos);
-        if (cropDragHandle != CropHandle::None) {
+        if (cropDragHandle != CropHandles(CropHandle::None)) {
             cropDragging = true;
             cropDragStartScene = scenePos;
             cropRectAtDragStart = cropRect;
@@ -689,7 +690,7 @@ QVGraphicsView::CropHandles QVGraphicsView::cropHandleAt(const QPointF &scenePos
         handle |= CropHandle::Bottom;
     }
 
-    if (handle != CropHandle::None)
+    if (handle != CropHandles(CropHandle::None))
         return handle;
 
     return cropRect.contains(scenePos) ? CropHandle::Move : CropHandle::None;
@@ -707,7 +708,7 @@ void QVGraphicsView::updateCropCursor(CropHandles handle)
         handle ^= (CropHandle::Top | CropHandle::Bottom);
 
     Qt::CursorShape shape = Qt::ArrowCursor;
-    if (handle == CropHandle::Move) {
+    if (handle == CropHandles(CropHandle::Move)) {
         shape = cropDragging ? Qt::ClosedHandCursor : Qt::OpenHandCursor;
     } else if (handle == (CropHandle::Left | CropHandle::Top)
                || handle == (CropHandle::Right | CropHandle::Bottom)) {
@@ -715,9 +716,11 @@ void QVGraphicsView::updateCropCursor(CropHandles handle)
     } else if (handle == (CropHandle::Right | CropHandle::Top)
                || handle == (CropHandle::Left | CropHandle::Bottom)) {
         shape = Qt::SizeBDiagCursor;
-    } else if (handle == CropHandle::Left || handle == CropHandle::Right) {
+    } else if (handle == CropHandles(CropHandle::Left)
+               || handle == CropHandles(CropHandle::Right)) {
         shape = Qt::SizeHorCursor;
-    } else if (handle == CropHandle::Top || handle == CropHandle::Bottom) {
+    } else if (handle == CropHandles(CropHandle::Top)
+               || handle == CropHandles(CropHandle::Bottom)) {
         shape = Qt::SizeVerCursor;
     }
 
@@ -800,7 +803,7 @@ qreal QVGraphicsView::effectiveCropAspectRatio(bool constrain) const
 
 void QVGraphicsView::dragCropTo(const QPointF &scenePos, bool constrain)
 {
-    if (!cropDragging || cropDragHandle == CropHandle::None)
+    if (!cropDragging || cropDragHandle == CropHandles(CropHandle::None))
         return;
 
     const QRectF bounds = loadedPixmapItem->boundingRect();
@@ -815,7 +818,7 @@ void QVGraphicsView::dragCropTo(const QPointF &scenePos, bool constrain)
             || cropDragHandle.testFlag(CropHandle::Bottom);
 
     QRectF rect = cropRectAtDragStart;
-    if (cropDragHandle == CropHandle::Move) {
+    if (cropDragHandle == CropHandles(CropHandle::Move)) {
         rect = dragCropMove(rect, bounds, dx, dy);
     } else if (aspectRatio <= 0.0) {
         rect = dragCropFree(rect, bounds, dx, dy);
