@@ -3,7 +3,8 @@ set -e
 
 wget -L -O qt5ct.tar.bz2 'https://sourceforge.net/projects/qt5ct/files/latest/download'
 tar xf qt5ct.tar.bz2
-pushd qt5ct*
+rm -f qt5ct.tar.bz2
+pushd qt5ct-*/
 if [ -f CMakeLists.txt ]; then
     cmake -B build -DCMAKE_BUILD_TYPE=Release
     cmake --build build --parallel
