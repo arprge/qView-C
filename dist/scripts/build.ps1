@@ -50,7 +50,9 @@ New-Item -ItemType Directory -Force -Path build
 Push-Location build
 try {
     cmake $cmakeArgs ..
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     cmake --build . --config Release --parallel
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {
     Pop-Location
 }

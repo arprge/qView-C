@@ -17,15 +17,16 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: 'ubuntu-22.04'
             qtVersion: '5.15.2'
-          - runner: 'macos-14'
+          - runner: 'macos-15'
             qtVersion: '6.8.3'
             qtModules: 'qtimageformats'
             buildArch: 'Universal'
-          - runner: 'macos-14'
+          - runner: 'macos-15'
             qtVersion: '5.15.2'
             osSuffix: '_legacy'
             buildArch: 'X64'
