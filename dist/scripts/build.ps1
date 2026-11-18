@@ -39,9 +39,9 @@ if ($IsMacOS) {
     # Workaround for https://developercommunity.visualstudio.com/t/10664660
     $cmakeArgs += '-DCMAKE_CXX_FLAGS=-D_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR'
     if ($env:buildArch -eq 'X86') {
-        $cmakeArgs += "-A Win32"
+        $cmakeArgs += "-A", "Win32"
     } elseif ($env:buildArch -eq 'Arm64') {
-        $cmakeArgs += "-A ARM64"
+        $cmakeArgs += "-A", "ARM64"
     }
 }
 
