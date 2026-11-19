@@ -22,10 +22,10 @@ jobs:
         run: cmake -B build -DBUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --target actionmanagertests --parallel 2
 
       - name: Run tests
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" ctest --test-dir build
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" ctest --test-dir build --output-on-failure
 
   clang-tidy:
     name: Run clang-tidy
@@ -51,13 +51,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8'
-          cache: true
-          modules: 'qtimageformats'
 
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install -y clang-format

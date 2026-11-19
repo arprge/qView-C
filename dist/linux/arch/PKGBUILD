@@ -10,6 +10,7 @@ makedepends=('cmake' 'qt6-tools')
 optdepends=('kimageformats: support for additional image formats')
 provides=('qview')
 conflicts=('qview')
+options=('!debug')
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
