@@ -14,7 +14,8 @@ if ($IsWindows) {
 } elseif ($IsMacOS) {
     # By default CMake sets the deployment target for macOS to the build machine's version; set
     # it explicitly to the version supported by Qt for compatibility with older macOS versions
-    $env:MACOSX_DEPLOYMENT_TARGET = (Select-String -Path (Join-Path $env:QT_ROOT_DIR 'mkspecs/qconfig.pri'), (Join-Path $env:QT_ROOT_DIR 'mkspecs/common/macx.conf') -Pattern '^\s*QMAKE_MACOSX_DEPLOYMENT_TARGET\s*=\s*(.+?)\s*$').Matches[0].Groups[1].Value
+    $qtRootDir = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { (qmake -query QT_INSTALL_PREFIX) }
+    $env:MACOSX_DEPLOYMENT_TARGET = (Select-String -Path (Join-Path $qtRootDir 'mkspecs/qconfig.pri'), (Join-Path $qtRootDir 'mkspecs/common/macx.conf') -Pattern '^\s*QMAKE_MACOSX_DEPLOYMENT_TARGET\s*=\s*(.+?)\s*$').Matches[0].Groups[1].Value
 }
 
 # Prepare CMake arguments
