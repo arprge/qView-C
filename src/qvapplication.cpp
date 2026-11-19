@@ -76,8 +76,8 @@ public:
         }
     }
 
-    QSize sizeFromContents(ContentsType type, const QStyleOption *option,
-                           const QSize &contentsSize, const QWidget *widget) const override
+    QSize sizeFromContents(ContentsType type, const QStyleOption *option, const QSize &contentsSize,
+                           const QWidget *widget) const override
     {
         QSize size = QProxyStyle::sizeFromContents(type, option, contentsSize, widget);
 
@@ -487,8 +487,7 @@ void QVApplication::ensureFontLoaded(const QString &path)
 void QVApplication::applyUiScale()
 {
     const int uiScale =
-            qBound(minimumUiScale,
-                   getSettingsManager().getInt(SettingsManager::Setting::UiScale),
+            qBound(minimumUiScale, getSettingsManager().getInt(SettingsManager::Setting::UiScale),
                    maximumUiScale);
 
     if (uiScale == appliedUiScale)
@@ -515,7 +514,8 @@ void QVApplication::applyUiScale()
     }
 }
 
-QIcon QVApplication::iconFromFont(const QString &fontFamily, const QChar &codePoint, const int pixelSize, const qreal pixelRatio)
+QIcon QVApplication::iconFromFont(const QString &fontFamily, const QChar &codePoint,
+                                  const int pixelSize, const qreal pixelRatio)
 {
     const int scaledPixelSize = qRound(pixelSize * pixelRatio);
 

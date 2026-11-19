@@ -787,9 +787,8 @@ void ActionManager::initializeActionLibrary()
     randomFileAction->setData({ "folderdisable" });
     actionLibrary.insert("randomfile", randomFileAction);
 
-    auto *cropAction =
-            new QAction(QIcon::fromTheme("transform-crop", QIcon::fromTheme("edit-crop")),
-                        tr("&Crop"));
+    auto *cropAction = new QAction(
+            QIcon::fromTheme("transform-crop", QIcon::fromTheme("edit-crop")), tr("&Crop"));
     cropAction->setData({ "stillimagedisable" });
     actionLibrary.insert("editcrop", cropAction);
 
@@ -798,8 +797,8 @@ void ActionManager::initializeActionLibrary()
     brightnessContrastAction->setData({ "stillimagedisable" });
     actionLibrary.insert("brightnesscontrast", brightnessContrastAction);
 
-    auto *drawAction = new QAction(
-            QIcon::fromTheme("draw-freehand", QIcon::fromTheme("draw")), tr("&Draw"));
+    auto *drawAction =
+            new QAction(QIcon::fromTheme("draw-freehand", QIcon::fromTheme("draw")), tr("&Draw"));
     drawAction->setData({ "stillimagedisable" });
     actionLibrary.insert("draw", drawAction);
 

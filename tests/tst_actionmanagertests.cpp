@@ -196,8 +196,7 @@ void ActionManagerTests::testAdjustmentsLargeImage()
     image.fill(qRgba(100, 100, 100, 200));
     image.setPixel(1499, 999, qRgba(0, 0, 0, 10));
 
-    const QImage singleThreadRef =
-            QVImageCore::applyAdjustments(image.copy(0, 0, 2, 2), 50, 0);
+    const QImage singleThreadRef = QVImageCore::applyAdjustments(image.copy(0, 0, 2, 2), 50, 0);
     const int expectedMid = qRed(singleThreadRef.pixel(0, 0));
 
     const QImage result = QVImageCore::applyAdjustments(image, 50, 0);
@@ -385,9 +384,8 @@ void ActionManagerTests::testEditSessionAndWindowActionScope()
     windowA.openFile(imagePath);
     windowB.openFile(imagePath);
 
-    QVERIFY(QTest::qWaitFor([&]() {
-        return windowA.getIsPixmapLoaded() && windowB.getIsPixmapLoaded();
-    }));
+    QVERIFY(QTest::qWaitFor(
+            [&]() { return windowA.getIsPixmapLoaded() && windowB.getIsPixmapLoaded(); }));
 
     const auto getRotateRightAction = [](MainWindow &window) -> QAction * {
         const auto clones = qvApp->getActionManager().getAllClonesOfAction(

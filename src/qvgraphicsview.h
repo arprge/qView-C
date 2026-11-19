@@ -252,7 +252,7 @@ private:
     // Crop state
     QGraphicsPathItem *cropDimItem = nullptr;
     QGraphicsRectItem *cropSelectionItem = nullptr;
-    QRectF cropRect;               // current selection in scene (== image pixel) coordinates
+    QRectF cropRect; // current selection in scene (== image pixel) coordinates
     QRectF cropRectAtDragStart;
     QPointF cropDragStartScene;
     // (0,0) = Free, (-1,-1) = Original image aspect, (w,h) = fixed
