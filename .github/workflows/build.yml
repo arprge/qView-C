@@ -17,6 +17,12 @@ jobs:
             qtVersion: '5.15.2'
             artifactName: 'qView-linux-appimage'
             artifactPath: 'bin/*.AppImage'
+          - runner: 'macos-15'
+            qtVersion: '6.8.3'
+            qtModules: 'qtimageformats'
+            buildArch: 'Universal'
+            artifactName: 'qView-macos'
+            artifactPath: 'bin/*.dmg'
           - runner: 'windows-2022'
             qtVersion: '6.8.3'
             qtArch: 'win64_msvc2022_64'
@@ -64,6 +70,9 @@ jobs:
           & dist/scripts/download-plugins.ps1
           if ($IsWindows) {
             & dist/scripts/windeployqt.ps1 -Portable
+          } elseif ($IsMacOS) {
+            & dist/scripts/macinstallcert.ps1
+            bash dist/scripts/macdeploy.sh
           } else {
             bash dist/scripts/linuxdeployqt.sh
           }
@@ -179,6 +188,7 @@ jobs:
         run: |
           mkdir -p release_files
           cp artifacts/qView-linux-appimage/* release_files/
+          cp artifacts/qView-macos/* release_files/
           cp artifacts/qView-deb/* release_files/
           cp artifacts/qView-rpm/* release_files/
           cp artifacts/qView-arch/* release_files/

@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.16)
 
 project(qView VERSION 7.1 LANGUAGES CXX)
 
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 17)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+endif()
+
 # Optional test building
 option(BUILD_TESTS "Build tests" OFF)
 if(BUILD_TESTS)

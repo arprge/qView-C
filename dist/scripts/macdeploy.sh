@@ -25,11 +25,12 @@ if [[ (-f "$IMF_DIR/kimg_tga.dylib" || -f "$IMF_DIR/kimg_tga.so") && -f "$IMF_DI
 fi
 
 echo "Running codesign"
+SIGN_ID="${CODESIGN_CERT_NAME:--}"
 if [[ "$APPLE_NOTARIZE_REQUESTED" == "true" ]]; then
     APP_IDENTIFIER=$(/usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "qView.app/Contents/Info.plist")
-    codesign --sign "$CODESIGN_CERT_NAME" --deep --force --options runtime --timestamp "qView.app"
+    codesign --sign "$SIGN_ID" --deep --force --options runtime --timestamp "qView.app"
 else
-    codesign --sign "$CODESIGN_CERT_NAME" --deep --force "qView.app"
+    codesign --sign "$SIGN_ID" --deep --force "qView.app"
 fi
 
 echo "Creating disk image"
@@ -40,8 +41,11 @@ if [[ -n "$1" ]]; then
     hdiutil create -volname "$BUILD_NAME" -srcfolder "$BUILD_NAME.app" -fs HFS+ "$DMG_FILENAME"
 else
     DMG_FILENAME=qView-$VERSION.dmg
-    brew install create-dmg
-    create-dmg --volname "qView $VERSION" --window-size 660 400 --icon-size 160 --icon "qView.app" 180 170 --hide-extension qView.app --app-drop-link 480 170 "$DMG_FILENAME" "qView.app"
+    DMG_STAGE=$(mktemp -d)
+    cp -R qView.app "$DMG_STAGE/"
+    ln -s /Applications "$DMG_STAGE/Applications"
+    hdiutil create -volname "qView $VERSION" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_FILENAME"
+    rm -rf "$DMG_STAGE"
 fi
 if [[ "$APPLE_NOTARIZE_REQUESTED" == "true" ]]; then
     codesign --sign "$CODESIGN_CERT_NAME" --timestamp --identifier "$APP_IDENTIFIER.dmg" "$DMG_FILENAME"

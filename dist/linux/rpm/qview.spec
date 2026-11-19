@@ -1,3 +1,5 @@
+%global debug_package %{nil}
+
 Name:		qview-c
 Version:	7.1
 Release:	1%{?dist}
