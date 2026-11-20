@@ -43,12 +43,6 @@ jobs:
             buildArch: 'Arm64'
             artifactName: 'qView-windows-winarm64'
             artifactPath: 'bin'
-          - runner: 'windows-2022'
-            qtVersion: '5.15.2'
-            qtArch: 'win32_msvc2019'
-            buildArch: 'X86'
-            artifactName: 'qView-windows-win32'
-            artifactPath: 'bin'
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.optional == true }}
     timeout-minutes: 60
@@ -196,19 +190,18 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release_files
-          cp artifacts/qView-linux-appimage/* release_files/
+          VERSION="${{ steps.ver.outputs.version }}"
+          cp artifacts/qView-linux-appimage/*.AppImage "release_files/qView-C-${VERSION}-x86_64.AppImage"
           if [ -d artifacts/qView-macos ]; then
-            cp artifacts/qView-macos/* release_files/
+            cp artifacts/qView-macos/*.dmg "release_files/qView-C-${VERSION}-macos.dmg"
           else
             echo "::warning::macOS artifact missing, publishing release without it"
           fi
           cp artifacts/qView-deb/* release_files/
           cp artifacts/qView-rpm/* release_files/
           cp artifacts/qView-arch/* release_files/
-          VERSION="${{ steps.ver.outputs.version }}"
-          (cd artifacts/qView-windows-win64 && zip -r "../../release_files/qView-${VERSION}-win64.zip" .)
-          (cd artifacts/qView-windows-winarm64 && zip -r "../../release_files/qView-${VERSION}-winarm64.zip" .)
-          (cd artifacts/qView-windows-win32 && zip -r "../../release_files/qView-${VERSION}-win32.zip" .)
+          (cd artifacts/qView-windows-win64 && zip -r "../../release_files/qView-C-${VERSION}-win64.zip" .)
+          (cd artifacts/qView-windows-winarm64 && zip -r "../../release_files/qView-C-${VERSION}-winarm64.zip" .)
           ls -lh release_files/
 
       - name: Publish GitHub Release
@@ -217,4 +210,5 @@ jobs:
           tag_name: v${{ steps.ver.outputs.version }}
           name: qView-C ${{ steps.ver.outputs.version }}
           prerelease: false
+          body: "Release build of qView-C ${{ steps.ver.outputs.version }}: qView with built-in image editing."
           files: release_files/*
