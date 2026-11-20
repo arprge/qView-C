@@ -197,9 +197,9 @@ jobs:
           else
             echo "::warning::macOS artifact missing, publishing release without it"
           fi
-          cp artifacts/qView-deb/* release_files/
-          cp artifacts/qView-rpm/* release_files/
-          cp artifacts/qView-arch/* release_files/
+          cp artifacts/qView-deb/*.deb "release_files/qView-C-${VERSION}-amd64.deb"
+          cp artifacts/qView-rpm/*.rpm "release_files/qView-C-${VERSION}-x86_64.rpm"
+          cp artifacts/qView-arch/*.pkg.tar.zst "release_files/qView-C-${VERSION}-x86_64.pkg.tar.zst"
           (cd artifacts/qView-windows-win64 && zip -r "../../release_files/qView-C-${VERSION}-win64.zip" .)
           (cd artifacts/qView-windows-winarm64 && zip -r "../../release_files/qView-C-${VERSION}-winarm64.zip" .)
           ls -lh release_files/
