@@ -353,9 +353,9 @@ void MainWindow::settingsUpdated()
 
 #ifdef COCOA_LOADED
     // titlebaralwaysdark/hidetitlebar
-    QVCocoaFunctions::setVibrancy(
-            settingsManager.getBool(SettingsManager::Setting::HideTitlebar),
-            settingsManager.getBool(SettingsManager::Setting::ForceDarkMode), windowHandle());
+    QVCocoaFunctions::setVibrancy(settingsManager.getBool(SettingsManager::Setting::HideTitlebar),
+                                  settingsManager.getBool(SettingsManager::Setting::ForceDarkMode),
+                                  windowHandle());
     // quitonlastwindow
     qvApp->setQuitOnLastWindowClosed(
             settingsManager.getBool(SettingsManager::Setting::QuitOnLastWindow));
@@ -420,8 +420,8 @@ void MainWindow::disableActions()
         const auto &clonesOfAction =
                 qvApp->getActionManager().getAllClonesOfAction(actionKey, this);
         const bool disabledWhileEditing = isEditing
-                && (actionKey == "rotateleft" || actionKey == "rotateright"
-                    || actionKey == "mirror" || actionKey == "flip");
+                && (actionKey == "rotateleft" || actionKey == "rotateright" || actionKey == "mirror"
+                    || actionKey == "flip");
 
         // Enable this window's actions when a file is loaded
         if (data.last().contains("disable")) {
@@ -459,8 +459,8 @@ void MainWindow::disableActions()
 void MainWindow::requestPopulateOpenWithMenu()
 {
     const QString curFilePath = getCurrentFileDetails().fileInfo.absoluteFilePath();
-    openWithFutureWatcher.setFuture(QtConcurrent::run(
-            [curFilePath] { return OpenWith::getOpenWithItems(curFilePath); }));
+    openWithFutureWatcher.setFuture(
+            QtConcurrent::run([curFilePath] { return OpenWith::getOpenWithItems(curFilePath); }));
 }
 
 void MainWindow::populateOpenWithMenu(const QList<OpenWith::OpenWithItem> openWithItems)
