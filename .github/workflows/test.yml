@@ -2,14 +2,24 @@ name: Checks
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Pin the runner image: ubuntu-latest silently moved to 26.04, which changed the
+# clang-format version and broke install-qt-action's apt step (amd64v3 mirror errors).
 jobs:
   unit-tests:
     name: Run Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -29,9 +39,10 @@ jobs:
 
   clang-tidy:
     name: Run clang-tidy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -48,12 +59,17 @@ jobs:
 
   format:
     name: Run clang-format
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
+      # Pinned via PyPI so CI and local runs use the exact same formatter.
+      # Locally: pip install clang-format==21.1.6
       - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install -y clang-format
+        run: pipx install clang-format==21.1.6
 
       - name: Run clang-format
-        run: ./build.sh --format-check
+        run: |
+          clang-format --version
+          ./build.sh --format-check
